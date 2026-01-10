@@ -17,6 +17,9 @@ export default defineConfig([
     treeshake: true,
     minify: false,
     external: ['react', 'react-dom', 'jsdom'],
+    esbuildOptions(options) {
+      options.jsx = 'automatic';
+    },
   },
   // CLI entry (with shebang)
   {

@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 /**
  * SemanticDOM CLI
  * Validation and generation tool for SemanticDOM compliance
@@ -9,7 +8,7 @@
 import { Command } from 'commander';
 import chalk from 'chalk';
 import { createSemanticDOM } from '../core/semantic-dom.js';
-import type { SemanticDocument, ValidationCheck, AgentCertification } from '../core/types.js';
+import type { SemanticDocument, AgentCertification } from '../core/types.js';
 
 const VERSION = '0.1.0';
 
@@ -190,7 +189,7 @@ function parseHTML(
  */
 function validateHTML(
   html: string,
-  targetLevel: string
+  _targetLevel: string
 ): { certification: AgentCertification; document: SemanticDocument } {
   const document = parseHTML(html, { includeStateGraph: true });
   return { certification: document.agentReady, document };

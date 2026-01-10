@@ -265,7 +265,7 @@ export class SemanticDOM {
   /**
    * Extract state flags from element
    */
-  private extractStateFlags(element: Element): Partial<Record<StateType, boolean>> {
+  private extractStateFlags(element: Element): Partial<Record<StateType, boolean>> | undefined {
     const flags: Partial<Record<StateType, boolean>> = {};
 
     if (element.hasAttribute('disabled')) flags.disabled = true;

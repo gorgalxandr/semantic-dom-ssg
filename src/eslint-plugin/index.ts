@@ -5,7 +5,7 @@
  * @packageDocumentation
  */
 
-import type { Rule, Linter } from 'eslint';
+import type { Rule } from 'eslint';
 
 /**
  * Rule: require-accessible-name
@@ -253,7 +253,6 @@ const semanticIntent: Rule.RuleModule = {
                   messageId: 'suggestIntent',
                   data: { intent: suggestedIntent },
                   fix(fixer) {
-                    const source = context.getSourceCode();
                     const lastAttr = jsxNode.attributes[jsxNode.attributes.length - 1];
                     if (lastAttr) {
                       return fixer.insertTextAfter(
@@ -563,10 +562,10 @@ export const rules: Record<string, Rule.RuleModule> = {
 
 /**
  * Recommended configuration
+ * Note: For ESLint flat config, use the plugin directly
  */
-export const configs: Record<string, Linter.Config> = {
+export const configs = {
   recommended: {
-    plugins: ['semantic-dom'],
     rules: {
       'semantic-dom/require-accessible-name': 'error',
       'semantic-dom/valid-role': 'error',
@@ -576,7 +575,6 @@ export const configs: Record<string, Linter.Config> = {
     },
   },
   strict: {
-    plugins: ['semantic-dom'],
     rules: {
       'semantic-dom/require-accessible-name': 'error',
       'semantic-dom/valid-role': 'error',
@@ -587,7 +585,6 @@ export const configs: Record<string, Linter.Config> = {
     },
   },
   'agent-ready': {
-    plugins: ['semantic-dom'],
     rules: {
       'semantic-dom/require-accessible-name': 'error',
       'semantic-dom/valid-role': 'error',

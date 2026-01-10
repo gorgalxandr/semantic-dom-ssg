@@ -254,10 +254,10 @@ export function useSSG(
     }
   }, [id, ssgNode]);
 
-  const state = useSyncExternalStore(
+  const state = useSyncExternalStore<StateType>(
     (callback) => globalSSGStore.subscribe(callback),
-    () => globalSSGStore.getState(id) || 'idle',
-    () => 'idle'
+    () => globalSSGStore.getState(id) || ('idle' as StateType),
+    () => 'idle' as StateType
   );
 
   const history = useMemo(() => globalSSGStore.getHistory(id), [id, state]);
