@@ -423,7 +423,7 @@ function serializeNode(node: SemanticNode): Record<string, unknown> {
  * Export semantic document as a plain object
  */
 export function toPlainObject(document: SemanticDocument): Record<string, unknown> {
-  return JSON.parse(toJSON(document));
+  return JSON.parse(toJSON(document)) as Record<string, unknown>;
 }
 
 /**

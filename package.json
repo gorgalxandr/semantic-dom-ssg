@@ -116,6 +116,7 @@
   },
   "devDependencies": {
     "@types/eslint": "9.6.1",
+    "@types/jsdom": "27.0.0",
     "@types/node": "^20.11.0",
     "@types/react": "^18.2.48",
     "@typescript-eslint/eslint-plugin": "^6.19.0",

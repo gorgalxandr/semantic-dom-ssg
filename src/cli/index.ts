@@ -12,6 +12,30 @@ import type { SemanticDocument, AgentCertification } from '../core/types.js';
 
 const VERSION = '0.1.0';
 
+// CLI Option Types
+interface ValidateOptions {
+  level: string;
+  format: string;
+  strict?: boolean;
+  color?: boolean;
+}
+
+interface ParseOptions {
+  output?: string;
+  format: string;
+  stateGraph?: boolean;
+  bounds?: boolean;
+}
+
+interface StatsOptions {
+  format: string;
+}
+
+interface InitOptions {
+  react?: boolean;
+  eslint?: boolean;
+}
+
 const program = new Command();
 
 program
@@ -30,10 +54,10 @@ program
   .option('-f, --format <format>', 'Output format (text, json)', 'text')
   .option('--strict', 'Fail on warnings')
   .option('--no-color', 'Disable colored output')
-  .action(async (file, options) => {
+  .action(async (file: string, options: ValidateOptions) => {
     try {
       const html = await readInput(file);
-      const result = validateHTML(html, options.level);
+      const result = await validateHTML(html, options.level);
 
       if (options.format === 'json') {
         console.log(JSON.stringify(result, null, 2));
@@ -41,7 +65,7 @@ program
         printValidationResult(result, options);
       }
 
-      const exitCode = calculateExitCode(result, options.strict);
+      const exitCode = calculateExitCode(result, options.strict ?? false);
       process.exit(exitCode);
     } catch (error) {
       console.error(chalk.red('Error:'), error instanceof Error ? error.message : error);
@@ -60,10 +84,10 @@ program
   .option('-f, --format <format>', 'Output format (json, tree)', 'json')
   .option('--no-state-graph', 'Exclude state graph from output')
   .option('--no-bounds', 'Exclude bounds calculation')
-  .action(async (file, options) => {
+  .action(async (file: string, options: ParseOptions) => {
     try {
       const html = await readInput(file);
-      const document = parseHTML(html, {
+      const document = await parseHTML(html, {
         includeStateGraph: options.stateGraph !== false,
         computeBounds: options.bounds !== false,
       });
@@ -92,10 +116,10 @@ program
   .description('Show statistics about HTML semantic structure')
   .argument('<file>', 'HTML file to analyze (use - for stdin)')
   .option('-f, --format <format>', 'Output format (text, json)', 'text')
-  .action(async (file, options) => {
+  .action(async (file: string, options: StatsOptions) => {
     try {
       const html = await readInput(file);
-      const stats = analyzeHTML(html);
+      const stats = await analyzeHTML(html);
 
       if (options.format === 'json') {
         console.log(JSON.stringify(stats, null, 2));
@@ -116,7 +140,7 @@ program
   .description('Initialize SemanticDOM configuration in current project')
   .option('--react', 'Include React integration')
   .option('--eslint', 'Include ESLint plugin config')
-  .action(async (options) => {
+  .action((options: InitOptions) => {
     try {
       const config = generateConfig(options);
       console.log(chalk.green('SemanticDOM configuration:'));
@@ -146,7 +170,7 @@ function readStdin(): Promise<string> {
   return new Promise((resolve, reject) => {
     let data = '';
     process.stdin.setEncoding('utf-8');
-    process.stdin.on('data', (chunk) => {
+    process.stdin.on('data', (chunk: string) => {
       data += chunk;
     });
     process.stdin.on('end', () => resolve(data));
@@ -165,12 +189,12 @@ async function writeOutput(file: string, content: string): Promise<void> {
 /**
  * Parse HTML to SemanticDocument
  */
-function parseHTML(
+async function parseHTML(
   html: string,
   config: { includeStateGraph?: boolean; computeBounds?: boolean }
-): SemanticDocument {
+): Promise<SemanticDocument> {
   // Use JSDOM in Node.js
-  const { JSDOM } = require('jsdom');
+  const { JSDOM } = await import('jsdom');
   const dom = new JSDOM(html);
   const sdom = createSemanticDOM({
     ...config,
@@ -178,7 +202,7 @@ function parseHTML(
   });
 
   return sdom.parse(
-    dom.window.document.body,
+    dom.window.document.body as unknown as Element,
     'file://local',
     dom.window.document.title
   );
@@ -187,11 +211,11 @@ function parseHTML(
 /**
  * Validate HTML and return results
  */
-function validateHTML(
+async function validateHTML(
   html: string,
   _targetLevel: string
-): { certification: AgentCertification; document: SemanticDocument } {
-  const document = parseHTML(html, { includeStateGraph: true });
+): Promise<{ certification: AgentCertification; document: SemanticDocument }> {
+  const document = await parseHTML(html, { includeStateGraph: true });
   return { certification: document.agentReady, document };
 }
 
@@ -294,8 +318,8 @@ function calculateExitCode(
 /**
  * Analyze HTML and return statistics
  */
-function analyzeHTML(html: string): Record<string, unknown> {
-  const document = parseHTML(html, { includeStateGraph: true });
+async function analyzeHTML(html: string): Promise<Record<string, unknown>> {
+  const document = await parseHTML(html, { includeStateGraph: true });
 
   const roleCounts: Record<string, number> = {};
   const intentCounts: Record<string, number> = {};

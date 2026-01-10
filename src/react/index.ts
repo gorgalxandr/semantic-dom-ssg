@@ -78,8 +78,7 @@ export function useSemanticDocument(
       const title = typeof window !== 'undefined' ? window.document.title : '';
       setDocument(parse(ref.current, url, title));
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ref, parse, ...deps]);
+  }, [ref, parse, deps]);
 
   return document;
 }
@@ -97,8 +96,7 @@ export function useSemanticQuery(
   return useMemo(() => {
     if (!document) return [];
     return queryFn(document.root, query);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [document, queryFn, JSON.stringify(query), ...deps]);
+  }, [document, queryFn, query, deps]);
 }
 
 /**
