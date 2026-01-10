@@ -16,6 +16,18 @@ export {
   generateSemanticId,
 } from './core/semantic-dom.js';
 
+// TOON serialization exports
+export {
+  toTOON,
+  fromTOON,
+  treeToTOON,
+  landmarksToTOON,
+  interactablesToTOON,
+  stateGraphToTOON,
+  certificationToTOON,
+  estimateTokenSavings,
+} from './toon/index.js';
+
 // Version
 export const VERSION = '0.1.0';
 

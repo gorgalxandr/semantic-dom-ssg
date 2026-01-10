@@ -8,6 +8,7 @@
 import { Command } from 'commander';
 import chalk from 'chalk';
 import { createSemanticDOM } from '../core/semantic-dom.js';
+import { toTOON, estimateTokenSavings } from '../toon/index.js';
 import type { SemanticDocument, AgentCertification } from '../core/types.js';
 
 const VERSION = '0.1.0';
@@ -81,7 +82,7 @@ program
   .description('Parse HTML and output SemanticDOM structure')
   .argument('<file>', 'HTML file to parse (use - for stdin)')
   .option('-o, --output <file>', 'Output file (default: stdout)')
-  .option('-f, --format <format>', 'Output format (json, tree)', 'json')
+  .option('-f, --format <format>', 'Output format (json, tree, toon)', 'json')
   .option('--no-state-graph', 'Exclude state graph from output')
   .option('--no-bounds', 'Exclude bounds calculation')
   .action(async (file: string, options: ParseOptions) => {
@@ -92,9 +93,17 @@ program
         computeBounds: options.bounds !== false,
       });
 
-      const output = options.format === 'tree'
-        ? formatAsTree(document)
-        : formatAsJSON(document);
+      let output: string;
+      if (options.format === 'tree') {
+        output = formatAsTree(document);
+      } else if (options.format === 'toon') {
+        output = toTOON(document);
+        // Show token savings info
+        const savings = estimateTokenSavings(document);
+        console.error(chalk.dim(`TOON format: ~${savings.savingsPercent}% token savings (${savings.toonTokens} vs ${savings.jsonTokens} tokens)`));
+      } else {
+        output = formatAsJSON(document);
+      }
 
       if (options.output) {
         await writeOutput(options.output, output);

@@ -8,6 +8,7 @@ export default defineConfig([
       react: 'src/react/index.ts',
       vanilla: 'src/vanilla/index.ts',
       'eslint-plugin': 'src/eslint-plugin/index.ts',
+      toon: 'src/toon/index.ts',
     },
     format: ['esm', 'cjs'],
     dts: true,

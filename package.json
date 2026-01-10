@@ -58,6 +58,16 @@
         "types": "./dist/eslint-plugin.d.cts",
         "default": "./dist/eslint-plugin.cjs"
       }
+    },
+    "./toon": {
+      "import": {
+        "types": "./dist/toon.d.ts",
+        "default": "./dist/toon.js"
+      },
+      "require": {
+        "types": "./dist/toon.d.cts",
+        "default": "./dist/toon.cjs"
+      }
     }
   },
   "bin": {
@@ -93,7 +103,11 @@
     "iso-standard",
     "react-hooks",
     "typescript",
-    "agentic-web"
+    "agentic-web",
+    "toon",
+    "toon-format",
+    "llm",
+    "token-optimization"
   ],
   "repository": {
     "type": "git",
@@ -132,6 +146,7 @@
     "jsdom": "^24.0.0"
   },
   "dependencies": {
+    "@toon-format/toon": "2.1.0",
     "chalk": "^5.3.0",
     "commander": "^12.0.0"
   }
