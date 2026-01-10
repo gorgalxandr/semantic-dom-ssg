@@ -1,0 +1,136 @@
+{
+  "name": "semantic-dom-ssg",
+  "version": "0.1.0",
+  "description": "NPM package implementing ISO/IEC draft standard for SemanticDOM and Semantic State Graph - O(1) lookup, deterministic navigation, agent-ready web interoperability",
+  "author": "George <george@consltr.com>",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    },
+    "./react": {
+      "import": {
+        "types": "./dist/react.d.ts",
+        "default": "./dist/react.js"
+      },
+      "require": {
+        "types": "./dist/react.d.cts",
+        "default": "./dist/react.cjs"
+      }
+    },
+    "./vanilla": {
+      "import": {
+        "types": "./dist/vanilla.d.ts",
+        "default": "./dist/vanilla.js"
+      },
+      "require": {
+        "types": "./dist/vanilla.d.cts",
+        "default": "./dist/vanilla.cjs"
+      }
+    },
+    "./cli": {
+      "import": {
+        "types": "./dist/cli.d.ts",
+        "default": "./dist/cli.js"
+      },
+      "require": {
+        "types": "./dist/cli.d.cts",
+        "default": "./dist/cli.cjs"
+      }
+    },
+    "./eslint-plugin": {
+      "import": {
+        "types": "./dist/eslint-plugin.d.ts",
+        "default": "./dist/eslint-plugin.js"
+      },
+      "require": {
+        "types": "./dist/eslint-plugin.d.cts",
+        "default": "./dist/eslint-plugin.cjs"
+      }
+    }
+  },
+  "bin": {
+    "semantic-dom": "./dist/cli.js",
+    "ssg-validate": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src --ext .ts,.tsx",
+    "lint:fix": "eslint src --ext .ts,.tsx --fix",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "prepublishOnly": "npm run build && npm run typecheck && npm run test",
+    "clean": "rm -rf dist"
+  },
+  "keywords": [
+    "semantic-dom",
+    "ssg",
+    "semantic-state-graph",
+    "a11y",
+    "accessibility",
+    "ai-agent",
+    "web-automation",
+    "dom-parsing",
+    "iso-standard",
+    "react-hooks",
+    "typescript",
+    "agentic-web"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/gorgalxandr/semantic-dom-ssg.git"
+  },
+  "bugs": {
+    "url": "https://github.com/gorgalxandr/semantic-dom-ssg/issues"
+  },
+  "homepage": "https://github.com/gorgalxandr/semantic-dom-ssg#readme",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "peerDependencies": {
+    "react": ">=17.0.0"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/react": "^18.2.48",
+    "@typescript-eslint/eslint-plugin": "^6.19.0",
+    "@typescript-eslint/parser": "^6.19.0",
+    "eslint": "^8.56.0",
+    "jsdom": "^24.0.0",
+    "react": "^18.2.0",
+    "tsup": "^8.0.1",
+    "typescript": "^5.3.3",
+    "vitest": "^1.2.0"
+  },
+  "optionalDependencies": {
+    "jsdom": "^24.0.0"
+  },
+  "dependencies": {
+    "commander": "^12.0.0",
+    "chalk": "^5.3.0"
+  }
+}
