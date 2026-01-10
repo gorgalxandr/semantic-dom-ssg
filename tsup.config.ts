@@ -9,6 +9,7 @@ export default defineConfig([
       vanilla: 'src/vanilla/index.ts',
       'eslint-plugin': 'src/eslint-plugin/index.ts',
       toon: 'src/toon/index.ts',
+      mcp: 'src/mcp/index.ts',
     },
     format: ['esm', 'cjs'],
     dts: true,

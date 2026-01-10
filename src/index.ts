@@ -28,6 +28,25 @@ export {
   estimateTokenSavings,
 } from './toon/index.js';
 
+// MCP (Model Context Protocol) exports
+export {
+  createResource,
+  getTools,
+  getPrompts,
+  executeTool,
+  getCapabilities,
+  serializeForMCP,
+  SERVER_INFO,
+} from './mcp/index.js';
+
+export type {
+  MCPResource,
+  MCPTool,
+  MCPToolResult,
+  MCPPrompt,
+  SemanticDOMMCPCapabilities,
+} from './mcp/index.js';
+
 // Version
 export const VERSION = '0.1.0';
 
