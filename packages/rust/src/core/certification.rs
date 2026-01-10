@@ -53,7 +53,7 @@ pub fn run_certification_checks(root: &SemanticNode) -> AgentCertification {
     }
 
     // Check 3: Buttons have intents
-    let buttons: Vec<&SemanticNode> = all_nodes.iter().filter(|n| n.role == "button").collect();
+    let buttons: Vec<&SemanticNode> = all_nodes.iter().copied().filter(|n| n.role == "button").collect();
     let buttons_no_intent: Vec<SemanticId> = buttons
         .iter()
         .filter(|n| n.intent.is_none())

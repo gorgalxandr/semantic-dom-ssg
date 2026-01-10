@@ -64,7 +64,7 @@ impl SemanticDOMParser {
     fn parse_element(&mut self, element: ElementRef) -> Result<SemanticNode, ParseError> {
         let role = self.infer_role(&element);
         let label = self.infer_label(&element);
-        let intent = self.infer_intent(&element, &role, &label);
+        let _intent = self.infer_intent(&element, &role, &label);
         let state = self.infer_state(&element);
         let selector = self.build_selector(&element);
         let a11y = self.build_a11y(&element, &label);
