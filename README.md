@@ -1,294 +1,212 @@
 # semantic-dom-ssg
 
-NPM package implementing ISO/IEC draft standard for **SemanticDOM** and **Semantic State Graph (SSG)** - enabling O(1) lookup, deterministic navigation, and agent-ready web interoperability.
+**Machine-readable web semantics for AI agents.**
 
-[![npm version](https://badge.fury.io/js/semantic-dom-ssg.svg)](https://www.npmjs.com/package/semantic-dom-ssg)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+An implementation of the ISO/IEC draft standard for SemanticDOM and Semantic State Graph (SSG), providing O(1) element lookup, deterministic navigation, and token-efficient serialization formats optimized for LLM consumption.
 
-## Features
+## Implementations
 
-- **O(1) Lookup**: Hash-indexed semantic nodes for instant access
-- **Deterministic Navigation**: Predictable traversal patterns for AI agents
-- **Semantic State Graph (SSG)**: State machine for UI component states
-- **Agent Certification**: Validate web content for AI agent readiness
-- **React Hooks**: First-class React integration with `useSemanticDOM`, `useSSG`
-- **Vanilla JS**: Framework-agnostic API for any environment
-- **CLI Tool**: Validate and analyze HTML files
-- **ESLint Plugin**: Enforce semantic accessibility in your codebase
+| Language | Package | Status |
+|----------|---------|--------|
+| TypeScript | [![npm](https://img.shields.io/npm/v/semantic-dom-ssg.svg)](https://www.npmjs.com/package/semantic-dom-ssg) | Published |
+| Rust | [![crates.io](https://img.shields.io/crates/v/semantic-dom-ssg.svg)](https://crates.io/crates/semantic-dom-ssg) | Ready |
+| Python | [![PyPI](https://img.shields.io/pypi/v/semantic-dom-ssg.svg)](https://pypi.org/project/semantic-dom-ssg/) | Ready |
 
-## Installation
+## The Problem
 
-```bash
-npm install semantic-dom-ssg
-# or
-yarn add semantic-dom-ssg
-# or
-pnpm add semantic-dom-ssg
-```
+When AI agents interact with web content, they face several challenges:
+
+1. **Token inefficiency**: JSON/HTML representations consume excessive context tokens
+2. **Navigation complexity**: DOM traversal requires O(n) scanning
+3. **State opacity**: UI state and transitions are implicit, not machine-readable
+4. **No standard format**: Every site structures semantics differently
+
+## The Solution
+
+semantic-dom-ssg provides:
+
+| Feature | Benefit |
+|---------|---------|
+| **O(1) Lookup** | Hash-indexed nodes for instant element access |
+| **State Graph** | Explicit FSM for UI states and valid transitions |
+| **Agent Summary** | ~100 tokens vs ~800 for JSON (87% reduction) |
+| **Security Hardened** | Input validation, URL sanitization, size limits |
 
 ## Quick Start
 
-### React
-
-```tsx
-import { useSemanticDocument, useSemanticQuery, useCertification } from 'semantic-dom-ssg/react';
-import { useRef } from 'react';
-
-function App() {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const document = useSemanticDocument(containerRef);
-  const buttons = useSemanticQuery(document, { role: 'button' });
-  const { level, score, isAgentReady } = useCertification(document);
-
-  return (
-    <div ref={containerRef}>
-      <h1>My App</h1>
-      <button data-semantic-intent="submit">Submit</button>
-      <button data-semantic-intent="cancel">Cancel</button>
-
-      {isAgentReady && (
-        <p>Agent Ready: {level} ({score}/100)</p>
-      )}
-      <p>Found {buttons.length} buttons</p>
-    </div>
-  );
-}
-```
-
-### Vanilla JavaScript
-
-```javascript
-import { parse, query, getLandmarks, isAgentReady } from 'semantic-dom-ssg/vanilla';
-
-// Parse the current page
-const document = parse(document.body);
-
-// Query semantic nodes
-const buttons = query(document, { role: 'button', interactive: true });
-const links = query(document, { role: 'link', intent: 'navigate' });
-
-// Get landmarks for quick navigation
-const landmarks = getLandmarks(document);
-
-// Check agent readiness
-if (isAgentReady(document)) {
-  console.log('Document is agent-ready!');
-}
-
-// O(1) lookup by ID
-import { getById } from 'semantic-dom-ssg/vanilla';
-const node = getById(document, 'sdom-button-0-abc123');
-```
-
-### CLI
+### TypeScript/JavaScript
 
 ```bash
-# Validate HTML file
-npx semantic-dom validate index.html
-
-# Parse and output structure
-npx semantic-dom parse index.html --format tree
-
-# Show statistics
-npx semantic-dom stats index.html
-
-# Validate with strict mode
-npx semantic-dom validate index.html --strict --level advanced
+npm install semantic-dom-ssg
 ```
-
-### ESLint Plugin
-
-```javascript
-// .eslintrc.js
-module.exports = {
-  plugins: ['semantic-dom'],
-  extends: ['plugin:semantic-dom/recommended'],
-  rules: {
-    'semantic-dom/require-accessible-name': 'error',
-    'semantic-dom/valid-role': 'error',
-    'semantic-dom/semantic-intent': 'warn',
-  },
-};
-```
-
-## Core Concepts
-
-### SemanticDOM
-
-SemanticDOM transforms HTML/DOM into a semantically-rich, navigable structure optimized for AI agents:
 
 ```typescript
-interface SemanticNode {
-  id: SemanticId;           // Unique identifier for O(1) lookup
-  role: SemanticRole;       // ARIA role (button, link, navigation, etc.)
-  label: string;            // Human-readable label
-  intent?: SemanticIntent;  // What action this element performs
-  state: StateType;         // Current state (idle, loading, disabled, etc.)
-  selector: string;         // CSS selector for element
-  xpath: string;            // XPath for precise location
-  a11y: SemanticA11y;       // Accessibility properties
-  children: SemanticNode[]; // Child nodes
-}
+import { createSemanticDOM, toAgentSummary } from 'semantic-dom-ssg';
+
+const sdom = createSemanticDOM();
+const document = sdom.parse(document.body, window.location.href);
+
+// Generate agent summary (~100 tokens)
+const summary = toAgentSummary(document);
+
+// O(1) element lookup
+const button = document.index.get('sdom-button-0-abc123');
 ```
 
-### Semantic State Graph (SSG)
+### Rust
 
-SSG models UI state transitions for predictable agent interactions:
+```toml
+[dependencies]
+semantic-dom-ssg = "0.1"
+```
 
-```typescript
-interface SSGNode {
-  semanticId: SemanticId;
-  currentState: StateType;
-  transitions: StateTransition[];
-  history: StateHistoryEntry[];
+```rust
+use semantic_dom_ssg::{SemanticDOM, Config};
+
+let html = r#"<html><body><nav><a href="/">Home</a></nav></body></html>"#;
+let sdom = SemanticDOM::parse(html, None)?;
+
+// O(1) lookup via HashMap
+for (id, node) in &sdom.index {
+    println!("{}: {:?}", id, node.role);
 }
 
-interface StateTransition {
-  from: StateType;
-  to: StateType;
-  trigger: SemanticIntent | string;
-}
+// Token-efficient summary (~100 tokens)
+println!("{}", sdom.to_agent_summary());
 ```
 
-### Agent Certification
-
-Documents are certified for agent-readiness based on:
-
-- **Structure**: Proper landmark usage, heading hierarchy
-- **Accessibility**: Accessible names, keyboard navigation
-- **Navigation**: Unique IDs, valid selectors
-- **State**: Defined state transitions
-- **Interoperability**: Semantic intents defined
-
-Levels: `none` | `basic` | `standard` | `advanced` | `full`
-
-## API Reference
-
-### Core
-
-```typescript
-import {
-  SemanticDOM,
-  createSemanticDOM,
-  parseElement,
-  // Types
-  SemanticNode,
-  SemanticDocument,
-  SemanticQuery,
-  SemanticDOMConfig,
-} from 'semantic-dom-ssg';
-```
-
-### React Hooks
-
-```typescript
-import {
-  useSemanticDOM,        // Create SemanticDOM instance
-  useSemanticDocument,   // Parse element ref to document
-  useSemanticQuery,      // Query nodes reactively
-  useSemanticNode,       // Get node by ID
-  useSemanticNavigation, // Keyboard navigation
-  useSSG,                // State management
-  useLandmarks,          // Get landmarks
-  useInteractables,      // Get interactive elements
-  useCertification,      // Get certification info
-  useSemanticObserver,   // Auto-reparse on DOM changes
-  SemanticDOMProvider,   // Context provider
-} from 'semantic-dom-ssg/react';
-```
-
-### Vanilla JS
-
-```typescript
-import {
-  init,              // Initialize with config
-  parse,             // Parse element/document
-  parseHTML,         // Parse HTML string
-  query,             // Query nodes
-  getById,           // O(1) lookup
-  navigate,          // Navigate between nodes
-  getLandmarks,      // Get landmarks
-  getInteractables,  // Get interactive elements
-  isAgentReady,      // Check certification
-  // State management
-  SSGStateManager,
-  createSSGManager,
-  // Observer
-  SemanticObserver,
-  createObserver,
-  // Serialization
-  toJSON,
-  toPlainObject,
-  // DOM interaction
-  click,
-  focus,
-  setValue,
-} from 'semantic-dom-ssg/vanilla';
-```
-
-### CLI Commands
+### Python
 
 ```bash
-semantic-dom validate <file>  # Validate HTML
-semantic-dom parse <file>     # Parse to SemanticDOM
-semantic-dom stats <file>     # Show statistics
-semantic-dom init             # Generate config
+pip install semantic-dom-ssg
 ```
 
-### ESLint Rules
+```python
+from semantic_dom_ssg import SemanticDOM
 
-| Rule | Description | Recommended |
-|------|-------------|-------------|
-| `require-accessible-name` | Require accessible names on interactive elements | error |
-| `valid-role` | Ensure ARIA roles are valid | error |
-| `semantic-intent` | Encourage semantic intent annotations | warn |
-| `no-redundant-role` | Warn about redundant implicit roles | warn |
-| `require-heading-hierarchy` | Ensure heading levels don't skip | warn |
-| `prefer-semantic-elements` | Prefer semantic HTML over div+role | warn |
+html = """<html><body><nav><a href="/">Home</a></nav></body></html>"""
+sdom = SemanticDOM.parse(html)
 
-## Configuration
+# O(1) lookup via dict
+for node_id, node in sdom.index.items():
+    print(f"{node_id}: {node.role.value}")
 
-```typescript
-interface SemanticDOMConfig {
-  computeBounds?: boolean;      // Include bounding boxes (default: true)
-  includeStateGraph?: boolean;  // Generate SSG (default: true)
-  maxDepth?: number;            // Max tree depth (default: 50)
-  exclude?: string[];           // Elements to exclude
-  include?: string[];           // Elements to include
-  roleMapping?: Record<string, SemanticRole>;    // Custom role mappings
-  intentMapping?: Record<string, SemanticIntent>; // Custom intent mappings
-  generateIds?: boolean;        // Generate unique IDs (default: true)
-  idPrefix?: string;            // ID prefix (default: 'sdom')
-  validate?: boolean;           // Validate during parse (default: true)
-  targetCertification?: 'none' | 'basic' | 'standard' | 'advanced' | 'full';
-}
+# Token-efficient summary (~100 tokens)
+print(sdom.to_agent_summary())
 ```
 
-## Standards Compliance
+## CLI Tools
 
-This package implements the ISO/IEC draft standard for SemanticDOM and Semantic State Graph (`ISO/IEC-SDOM-SSG-DRAFT-2024`), providing:
+All implementations provide compatible CLI tools:
 
-- **Interoperability**: Standard format for AI agent ↔ web communication
-- **Determinism**: Predictable navigation and state transitions
-- **Accessibility**: Built on WAI-ARIA and WCAG principles
-- **Performance**: O(1) lookups, minimal parsing overhead
+```bash
+# TypeScript
+npx semantic-dom parse index.html --format summary
 
-## Browser Support
+# Rust
+semantic-dom parse index.html --format summary
 
-- Chrome/Edge 88+
-- Firefox 78+
-- Safari 14+
-- Node.js 18+
+# Python
+semantic-dom parse index.html --format summary
+```
 
-## Contributing
+### Commands
 
-Contributions are welcome! Please read our contributing guidelines and submit pull requests.
+| Command | Description |
+|---------|-------------|
+| `parse <file>` | Parse HTML to semantic format |
+| `validate <file>` | Check agent readiness certification |
+| `tokens <file>` | Compare token usage between formats |
+
+### Output Formats
+
+| Format | Tokens | Use Case |
+|--------|--------|----------|
+| `summary` | ~100 | LLM context, quick overview |
+| `oneline` | ~20 | Ultra-compressed contexts |
+| `json` | ~800 | Full programmatic access |
+
+## Agent Certification
+
+Documents are scored based on completeness and structure quality:
+
+| Level | Score | Requirements |
+|-------|-------|--------------|
+| AAA | 90+ | Full compliance, complete metadata |
+| AA | 70-89 | Deterministic FSM, strong structure |
+| A | 50-69 | Basic compliance |
+| None | <50 | Not agent-ready |
+
+Scoring categories:
+- **Structure** (30%): Landmarks, heading hierarchy, unique IDs
+- **Accessibility** (30%): Accessible names, link/button text
+- **Navigation** (25%): Navigation landmark, deterministic FSM
+- **Interoperability** (15%): CSS selectors, semantic intents
+
+## Security
+
+All implementations enforce security hardening per ISO/IEC-SDOM-SSG-DRAFT-2024:
+
+- **Input Size Limits**: 10MB default maximum
+- **URL Validation**: Only `https`, `http`, `file` protocols allowed
+- **Protocol Blocking**: `javascript:`, `data:`, `vbscript:`, `blob:` blocked
+- **No Script Execution**: HTML parsing only, no JS evaluation
+
+## Repository Structure
+
+```
+semantic-dom-ssg/
+├── typescript/          # TypeScript/JavaScript implementation
+│   ├── src/            # Source code
+│   └── packages/       # React hooks, MCP server
+├── rust/               # Rust implementation
+│   └── src/            # Source code
+├── python/             # Python implementation
+│   ├── semantic_dom_ssg/
+│   └── tests/
+└── fixtures/           # Shared test fixtures
+```
+
+## Development
+
+### TypeScript
+
+```bash
+cd typescript
+npm install
+npm run build
+npm test
+```
+
+### Rust
+
+```bash
+cd rust
+cargo build
+cargo test
+```
+
+### Python
+
+```bash
+cd python
+pip install -e ".[dev]"
+pytest
+```
+
+## Standards
+
+Implements: `ISO/IEC-SDOM-SSG-DRAFT-2024`
+
+Built on:
+- [WAI-ARIA 1.2](https://www.w3.org/TR/wai-aria-1.2/)
+- [WCAG 2.1](https://www.w3.org/WAI/WCAG21/quickref/)
+- [Schema.org](https://schema.org/) vocabulary
 
 ## License
 
-MIT - see [LICENSE](LICENSE) for details.
+MIT
 
-## Related
+## Author
 
-- [WAI-ARIA Specification](https://www.w3.org/WAI/ARIA/apg/)
-- [WCAG 2.1](https://www.w3.org/WAI/WCAG21/quickref/)
+George Alexander <info@gorgalxandr.com>

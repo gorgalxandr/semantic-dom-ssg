@@ -1,0 +1,78 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "semantic-dom-ssg"
+version = "0.2.0"
+description = "Machine-readable web semantics for AI agents. O(1) lookup, deterministic navigation, token-efficient serialization."
+readme = "README.md"
+license = "MIT"
+authors = [
+    { name = "George Alexander", email = "info@gorgalxandr.com" }
+]
+keywords = [
+    "semantic-dom",
+    "ai-agent",
+    "web-automation",
+    "accessibility",
+    "llm",
+    "html-parser",
+    "token-optimization"
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Internet :: WWW/HTTP :: Browsers",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Text Processing :: Markup :: HTML",
+]
+requires-python = ">=3.10"
+dependencies = [
+    "beautifulsoup4>=4.12.0",
+    "lxml>=5.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "black>=23.0.0",
+    "mypy>=1.0.0",
+    "ruff>=0.1.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/gorgalxandr/semantic-dom-ssg"
+Documentation = "https://github.com/gorgalxandr/semantic-dom-ssg#readme"
+Repository = "https://github.com/gorgalxandr/semantic-dom-ssg"
+Issues = "https://github.com/gorgalxandr/semantic-dom-ssg/issues"
+
+[project.scripts]
+semantic-dom = "semantic_dom_ssg.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["semantic_dom_ssg"]
+
+[tool.black]
+line-length = 100
+target-version = ["py310", "py311", "py312"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
