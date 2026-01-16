@@ -91,7 +91,7 @@ public class SemanticNode {
      * Check if this node is interactive (focusable).
      */
     public boolean isInteractive() {
-        return a11y.isFocusable();
+        return a11y.focusable();
     }
 
     /**

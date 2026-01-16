@@ -184,12 +184,14 @@ public class ToonSerializer {
         map.put("state", node.getState());
         map.put("selector", node.getSelector());
         map.put("xpath", node.getXpath());
-        map.put("a11y", Map.of(
-                "name", node.getA11y().name(),
-                "focusable", node.getA11y().focusable(),
-                "inTabOrder", node.getA11y().inTabOrder(),
-                "level", node.getA11y().level()
-        ));
+        Map<String, Object> a11yMap = new LinkedHashMap<>();
+        a11yMap.put("name", node.getA11y().name());
+        a11yMap.put("focusable", node.getA11y().focusable());
+        a11yMap.put("inTabOrder", node.getA11y().inTabOrder());
+        if (node.getA11y().level() != null) {
+            a11yMap.put("level", node.getA11y().level());
+        }
+        map.put("a11y", a11yMap);
         map.put("children", node.getChildren().stream()
                 .map(ToonSerializer::nodeToMap)
                 .toList());
