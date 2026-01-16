@@ -1,6 +1,6 @@
 {
   "name": "semantic-dom-ssg",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "NPM package implementing ISO/IEC draft standard for SemanticDOM and Semantic State Graph - O(1) lookup, deterministic navigation, agent-ready web interoperability",
   "author": "George Alexander <info@gorgalxandr.com>",
   "license": "MIT",
