@@ -115,21 +115,13 @@ validateAndSanitizeUrl('/path/to/file'); // Returns path
 
 ### 4. Selector Escaping
 
-**Location**: `src/core/semantic-dom.ts`
+**Location**: `typescript/src/core/security.ts`, `typescript/src/core/selectors.ts`
 
-```typescript
-if (current.id) {
-  selector = `#${CSS.escape(current.id)}`;
-}
-const classes = Array.from(current.classList);
-if (classes.length > 0) {
-  selector += `.${classes.map((c) => CSS.escape(c)).join('.')}`;
-}
-```
-
-**Rationale**:
-- Uses `CSS.escape()` to prevent CSS injection
-- Handles special characters in IDs and class names safely
+Element ids are escaped with `cssEscape`, an implementation of the CSSOM
+`CSS.escape` algorithm bundled with the package (the browser global does not
+exist in Node.js). Selectors use ids and `:nth-of-type` positions only, never
+class names, and tests assert that every generated selector resolves back to
+its element.
 
 ### 5. JSON Parsing Safety
 
@@ -158,6 +150,49 @@ All output formats properly encode data:
 - **JSON**: Uses `JSON.stringify()` with proper escaping
 - **TOON**: Uses `@toon-format/toon` encoder
 - **Summary**: Plain text, no HTML/script injection risk
+
+### 7. Secret Redaction (0.3.0)
+
+Values of `type="password"` and `type="hidden"` inputs, and of fields whose
+`autocomplete` marks them as passwords, one-time codes or payment data, are
+never written to a document. The TypeScript option `redactSensitiveValues:
+false` turns this off for output that never leaves the page.
+
+### 8. Untrusted Text in Summaries (0.3.0)
+
+Labels, names and titles are reduced to one line, stripped of control,
+zero-width and bidirectional characters, and length-capped at parse time and
+again when a summary is rendered. Page text therefore cannot add a line (for
+example a forged `CERT:` header) or a column to an agent summary.
+
+This does not make page text trustworthy. A label can still *say* anything, so
+consumers must present summaries to a model as data, not instructions. The MCP
+prompts do this by fencing the summary and saying so.
+
+### 9. Link Targets and Credentials (0.3.0)
+
+`javascript:`, `data:`, `vbscript:` and `blob:` targets are dropped. User names
+and passwords are removed from every URL that is emitted. URLs longer than 2048
+characters are rejected.
+
+### 10. Resource Limits (0.3.0)
+
+| Limit | Default | Ceiling |
+|-------|---------|---------|
+| Input size | 10MB, enforced while reading | - |
+| Tree depth (`maxDepth`) | 50 | 512 |
+| Nodes (`maxNodes`, TypeScript) | 50,000 | 1,000,000 |
+| HTML nesting (Rust) | 512, then an error | - |
+| MCP message | 1MB | - |
+
+A document cut short by a limit is flagged `truncated`.
+
+### 11. MCP Server (0.3.0)
+
+Tool arguments are type- and length-checked, unknown resources are refused,
+internal error details are not returned to the client, and nothing but protocol
+messages is written to stdout. The server reads one local file; it does not
+fetch URLs.
 
 ## Security Checklist for Contributors
 
@@ -236,6 +271,7 @@ const malicious = { '__proto__': { admin: true } };
 
 | Version | Security Changes |
 |---------|------------------|
+| 0.3.0 | Secret redaction, summary line-injection fix, link target and credential filtering, bounded reads, node/depth limits, MCP argument validation, committed lockfile and CI audits |
 | 0.2.0 | Added JSDOM hardening, input size limits, URL validation |
 | 0.1.0 | Initial release |
 

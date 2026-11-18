@@ -44,20 +44,20 @@ npm install semantic-dom-ssg
 import { createSemanticDOM, toAgentSummary } from 'semantic-dom-ssg';
 
 const sdom = createSemanticDOM();
-const document = sdom.parse(document.body, window.location.href);
+const doc = sdom.parse(document.body, window.location.href);
 
 // Generate agent summary (~100 tokens)
-const summary = toAgentSummary(document);
+const summary = toAgentSummary(doc);
 
-// O(1) element lookup
-const button = document.index.get('sdom-button-0-abc123');
+// O(1) element lookup. IDs are stable: the same DOM always yields the same IDs.
+const button = doc.index.get(doc.interactables[0].id);
 ```
 
 ### Rust
 
 ```toml
 [dependencies]
-semantic-dom-ssg = "0.1"
+semantic-dom-ssg = "0.3"
 ```
 
 ```rust
@@ -117,6 +117,7 @@ semantic-dom parse index.html --format summary
 | `parse <file>` | Parse HTML to semantic format |
 | `validate <file>` | Check agent readiness certification |
 | `tokens <file>` | Compare token usage between formats |
+| `mcp <file>` | Serve a page to an MCP client over stdio (TypeScript) |
 
 ### Output Formats
 
@@ -147,18 +148,23 @@ Scoring categories:
 
 All implementations enforce security hardening per ISO/IEC-SDOM-SSG-DRAFT-2024:
 
-- **Input Size Limits**: 10MB default maximum
-- **URL Validation**: Only `https`, `http`, `file` protocols allowed
+- **Input Size Limits**: 10MB default maximum, enforced while reading
+- **URL Validation**: Only `https`, `http`, `file` protocols allowed; credentials stripped
 - **Protocol Blocking**: `javascript:`, `data:`, `vbscript:`, `blob:` blocked
 - **No Script Execution**: HTML parsing only, no JS evaluation
+- **Secret Redaction**: password, hidden, payment and one-time-code values are never emitted
+- **Single-line Labels**: page text cannot add lines to an agent summary
+
+Page content is untrusted input. Output is safe to *display* to a model, but a
+model should still treat labels as data, not instructions. See [SECURITY.md](SECURITY.md).
 
 ## Repository Structure
 
 ```
 semantic-dom-ssg/
 ├── typescript/          # TypeScript/JavaScript implementation
-│   ├── src/            # Source code
-│   └── packages/       # React hooks, MCP server
+│   ├── src/            # core, cli, mcp, react, vanilla, eslint-plugin, toon, summary
+│   └── packages/       # Homebrew formula
 ├── rust/               # Rust implementation
 │   └── src/            # Source code
 ├── python/             # Python implementation
@@ -171,19 +177,19 @@ semantic-dom-ssg/
 
 ### TypeScript
 
+Requires Node.js 22.13+. Run from the repository root:
+
 ```bash
-cd typescript
-npm install
-npm run build
-npm test
+npm ci
+npm run verify   # file sizes, typecheck, lint, tests, build, package check
 ```
 
 ### Rust
 
 ```bash
 cd rust
-cargo build
-cargo test
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test --all-features
 ```
 
 ### Python
@@ -191,7 +197,7 @@ cargo test
 ```bash
 cd python
 pip install -e ".[dev]"
-pytest
+ruff check . && mypy --strict semantic_dom_ssg && pytest
 ```
 
 ## Standards

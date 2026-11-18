@@ -5,542 +5,265 @@
  * @packageDocumentation
  */
 
-import { Command } from 'commander';
-import chalk from 'chalk';
-import { createSemanticDOM } from '../core/semantic-dom.js';
-import { toTOON, estimateTokenSavings } from '../toon/index.js';
-import { toAgentSummary, toOneLiner, compareTokenUsage } from '../summary/index.js';
-import type { SemanticDocument, AgentCertification } from '../core/types.js';
+import { Command, InvalidArgumentError, Option } from 'commander';
+import type { AgentCertification, SemanticDocument } from '../core/types.js';
+import { CERTIFICATION_LEVELS, VERSION } from '../core/constants.js';
+import { meetsLevel } from '../core/certification.js';
+import { toSerializable } from '../core/serialize.js';
+import { serveStdio } from '../mcp/server.js';
+import { compareTokenUsage, toAgentSummary, toOneLiner } from '../summary/index.js';
+import { estimateTokenSavings, toTOON } from '../toon/index.js';
+import {
+  analyzeDocument,
+  colorEnabled,
+  createPainter,
+  formatStats,
+  formatTree,
+  formatValidation,
+} from './format.js';
+import { parseHTML, readInput, writeOutput } from './io.js';
 
-const VERSION = '0.1.0';
+type Level = AgentCertification['level'];
 
-// SECURITY: Maximum input size (10MB) to prevent DoS attacks
-const MAX_INPUT_SIZE = 10 * 1024 * 1024;
-
-// CLI Option Types
 interface ValidateOptions {
-  level: string;
-  format: string;
+  level: Level;
+  format: 'text' | 'json';
   strict?: boolean;
   color?: boolean;
+  url?: string;
 }
 
 interface ParseOptions {
   output?: string;
-  format: string;
+  format: 'json' | 'tree' | 'toon' | 'summary' | 'oneline';
   stateGraph?: boolean;
-  bounds?: boolean;
+  color?: boolean;
+  url?: string;
+  maxNodes?: number;
 }
 
-interface StatsOptions {
-  format: string;
+interface TextOrJson {
+  format: 'text' | 'json';
+  color?: boolean;
 }
 
-interface InitOptions {
-  react?: boolean;
-  eslint?: boolean;
-}
+const info = (message: string): void => void process.stderr.write(message + '\n');
+const print = (message: string): void => void process.stdout.write(message + '\n');
 
-const program = new Command();
-
-program
-  .name('semantic-dom')
-  .description('SemanticDOM & SSG validation and generation CLI')
-  .version(VERSION);
-
-/**
- * Validate command - check HTML for SemanticDOM compliance
- */
-program
-  .command('validate')
-  .description('Validate HTML for SemanticDOM compliance')
-  .argument('<file>', 'HTML file to validate (use - for stdin)')
-  .option('-l, --level <level>', 'Target certification level', 'standard')
-  .option('-f, --format <format>', 'Output format (text, json)', 'text')
-  .option('--strict', 'Fail on warnings')
-  .option('--no-color', 'Disable colored output')
-  .action(async (file: string, options: ValidateOptions) => {
-    try {
-      const html = await readInput(file);
-      const result = await validateHTML(html, options.level);
-
-      if (options.format === 'json') {
-        console.log(JSON.stringify(result, null, 2));
-      } else {
-        printValidationResult(result, options);
-      }
-
-      const exitCode = calculateExitCode(result, options.strict ?? false);
-      process.exit(exitCode);
-    } catch (error) {
-      console.error(chalk.red('Error:'), error instanceof Error ? error.message : error);
-      process.exit(1);
-    }
-  });
-
-/**
- * Parse command - generate SemanticDOM from HTML
- */
-program
-  .command('parse')
-  .description('Parse HTML and output SemanticDOM structure')
-  .argument('<file>', 'HTML file to parse (use - for stdin)')
-  .option('-o, --output <file>', 'Output file (default: stdout)')
-  .option('-f, --format <format>', 'Output format (json, tree, toon, summary, oneline)', 'json')
-  .option('--no-state-graph', 'Exclude state graph from output')
-  .option('--no-bounds', 'Exclude bounds calculation')
-  .action(async (file: string, options: ParseOptions) => {
-    try {
-      const html = await readInput(file);
-      const document = await parseHTML(html, {
-        includeStateGraph: options.stateGraph !== false,
-        computeBounds: options.bounds !== false,
-      });
-
-      let output: string;
-      if (options.format === 'tree') {
-        output = formatAsTree(document);
-      } else if (options.format === 'toon') {
-        output = toTOON(document);
-        // Show token savings info
-        const savings = estimateTokenSavings(document);
-        console.error(chalk.dim(`TOON format: ~${savings.savingsPercent}% token savings (${savings.toonTokens} vs ${savings.jsonTokens} tokens)`));
-      } else if (options.format === 'summary') {
-        output = toAgentSummary(document);
-        // Show token savings info
-        const savings = compareTokenUsage(document);
-        console.error(chalk.dim(`Summary format: ~${savings.savingsPercent}% token savings (${savings.summary} vs ${savings.json} tokens)`));
-      } else if (options.format === 'oneline') {
-        output = toOneLiner(document);
-        console.error(chalk.dim(`One-line format: ~${Math.ceil(output.length / 4)} tokens`));
-      } else {
-        output = formatAsJSON(document);
-      }
-
-      if (options.output) {
-        await writeOutput(options.output, output);
-        console.log(chalk.green(`Output written to ${options.output}`));
-      } else {
-        console.log(output);
-      }
-    } catch (error) {
-      console.error(chalk.red('Error:'), error instanceof Error ? error.message : error);
-      process.exit(1);
-    }
-  });
-
-/**
- * Stats command - show statistics about SemanticDOM structure
- */
-program
-  .command('stats')
-  .description('Show statistics about HTML semantic structure')
-  .argument('<file>', 'HTML file to analyze (use - for stdin)')
-  .option('-f, --format <format>', 'Output format (text, json)', 'text')
-  .action(async (file: string, options: StatsOptions) => {
-    try {
-      const html = await readInput(file);
-      const stats = await analyzeHTML(html);
-
-      if (options.format === 'json') {
-        console.log(JSON.stringify(stats, null, 2));
-      } else {
-        printStats(stats);
-      }
-    } catch (error) {
-      console.error(chalk.red('Error:'), error instanceof Error ? error.message : error);
-      process.exit(1);
-    }
-  });
-
-/**
- * Init command - generate SemanticDOM config file
- */
-program
-  .command('init')
-  .description('Initialize SemanticDOM configuration in current project')
-  .option('--react', 'Include React integration')
-  .option('--eslint', 'Include ESLint plugin config')
-  .action((options: InitOptions) => {
-    try {
-      const config = generateConfig(options);
-      console.log(chalk.green('SemanticDOM configuration:'));
-      console.log(config);
-    } catch (error) {
-      console.error(chalk.red('Error:'), error instanceof Error ? error.message : error);
-      process.exit(1);
-    }
-  });
-
-/**
- * Read input from file or stdin with size validation
- */
-async function readInput(file: string): Promise<string> {
-  let content: string;
-
-  if (file === '-') {
-    content = await readStdin();
-  } else {
-    const fs = await import('fs/promises');
-
-    // SECURITY: Check file size before reading
-    const stats = await fs.stat(file);
-    if (stats.size > MAX_INPUT_SIZE) {
-      throw new Error(`Input file exceeds maximum size of ${MAX_INPUT_SIZE / 1024 / 1024}MB`);
-    }
-
-    content = await fs.readFile(file, 'utf-8');
+function positiveInt(value: string): number {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isInteger(parsed) || parsed <= 0 || String(parsed) !== value.trim()) {
+    throw new InvalidArgumentError('Expected a positive integer.');
   }
-
-  // SECURITY: Final size check (for stdin or compressed files)
-  if (content.length > MAX_INPUT_SIZE) {
-    throw new Error(`Input content exceeds maximum size of ${MAX_INPUT_SIZE / 1024 / 1024}MB`);
-  }
-
-  return content;
+  return parsed;
 }
 
-/**
- * Read from stdin
- */
-function readStdin(): Promise<string> {
-  return new Promise((resolve, reject) => {
-    let data = '';
-    process.stdin.setEncoding('utf-8');
-    process.stdin.on('data', (chunk: string) => {
-      data += chunk;
-    });
-    process.stdin.on('end', () => resolve(data));
-    process.stdin.on('error', reject);
-  });
+function formatOption(choices: string[], fallback: string): Option {
+  return new Option('-f, --format <format>', 'Output format').choices(choices).default(fallback);
 }
 
-/**
- * Write output to file
- */
-async function writeOutput(file: string, content: string): Promise<void> {
-  const fs = await import('fs/promises');
-  await fs.writeFile(file, content, 'utf-8');
-}
+const urlOption = (): Option =>
+  new Option('--url <url>', 'URL the HTML was loaded from, recorded in the output');
 
-/**
- * Parse HTML to SemanticDocument
- */
-async function parseHTML(
-  html: string,
-  config: { includeStateGraph?: boolean; computeBounds?: boolean }
-): Promise<SemanticDocument> {
-  // Use JSDOM in Node.js with security hardening
-  const { JSDOM } = await import('jsdom');
-  const dom = new JSDOM(html, {
-    // SECURITY: Scripts are disabled by default (no runScripts option)
-    // SECURITY: External resources are not loaded by default (no resources option)
-    // SECURITY: Content type forces HTML parsing (no sniffing)
-    contentType: 'text/html',
-  });
-  const sdom = createSemanticDOM({
-    ...config,
-    computeBounds: false, // JSDOM doesn't support getBoundingClientRect properly
-  });
-
-  return sdom.parse(
-    dom.window.document.body as unknown as Element,
-    'file://local',
-    dom.window.document.title
-  );
-}
-
-/**
- * Validate HTML and return results
- */
-async function validateHTML(
-  html: string,
-  _targetLevel: string
-): Promise<{ certification: AgentCertification; document: SemanticDocument }> {
-  const document = await parseHTML(html, { includeStateGraph: true });
-  return { certification: document.agentReady, document };
-}
-
-/**
- * Print validation result
- */
-function printValidationResult(
-  result: { certification: AgentCertification; document: SemanticDocument },
-  options: { color?: boolean; strict?: boolean }
-): void {
-  const { certification } = result;
-  const useColor = options.color !== false;
-
-  console.log();
-  console.log(useColor ? chalk.bold('SemanticDOM Validation Report') : 'SemanticDOM Validation Report');
-  console.log(useColor ? chalk.dim('═'.repeat(50)) : '═'.repeat(50));
-  console.log();
-
-  // Certification level
-  const levelColors: Record<string, (s: string) => string> = {
-    full: chalk.green,
-    advanced: chalk.blue,
-    standard: chalk.yellow,
-    basic: chalk.magenta,
-    none: chalk.red,
-  };
-  const levelColor = useColor ? (levelColors[certification.level] || chalk.white) : (s: string) => s;
-
-  console.log(`Certification Level: ${levelColor(certification.level.toUpperCase())}`);
-  console.log(`Score: ${certification.score}/100`);
-  console.log();
-
-  // Passed checks
-  if (certification.checks.length > 0) {
-    console.log(useColor ? chalk.green('Passed Checks:') : 'Passed Checks:');
-    for (const check of certification.checks) {
-      console.log(`  ${useColor ? chalk.green('✓') : '✓'} ${check.name}`);
-    }
-    console.log();
-  }
-
-  // Failed checks
-  if (certification.failures.length > 0) {
-    console.log(useColor ? chalk.red('Failed Checks:') : 'Failed Checks:');
-    for (const check of certification.failures) {
-      const severityColor = getSeverityColor(check.severity, useColor);
-      console.log(`  ${useColor ? chalk.red('✗') : '✗'} ${check.name}`);
-      console.log(`    ${severityColor(`[${check.severity}]`)} ${check.message}`);
-      if (check.nodes && check.nodes.length > 0) {
-        console.log(`    Affected nodes: ${check.nodes.slice(0, 3).join(', ')}${check.nodes.length > 3 ? '...' : ''}`);
-      }
-    }
-    console.log();
-  }
-
-  // Summary
-  console.log(useColor ? chalk.dim('─'.repeat(50)) : '─'.repeat(50));
-  console.log(`Total: ${certification.checks.length} passed, ${certification.failures.length} failed`);
-}
-
-/**
- * Get color function for severity
- */
-function getSeverityColor(severity: string | undefined, useColor: boolean): (s: string) => string {
-  if (!useColor) return (s) => s;
-
-  switch (severity) {
-    case 'critical':
-      return chalk.bgRed.white;
-    case 'error':
-      return chalk.red;
-    case 'warning':
-      return chalk.yellow;
-    case 'info':
-      return chalk.blue;
-    default:
-      return chalk.white;
-  }
-}
-
-/**
- * Calculate exit code based on validation result
- */
-function calculateExitCode(
-  result: { certification: AgentCertification },
+/** Exit code for a validation: errors always fail, warnings only with --strict */
+export function validationExitCode(
+  certification: AgentCertification,
+  target: Level,
   strict: boolean
 ): number {
-  const { certification } = result;
-
-  const hasErrors = certification.failures.some(
-    (f) => f.severity === 'critical' || f.severity === 'error'
-  );
-  const hasWarnings = certification.failures.some((f) => f.severity === 'warning');
-
-  if (hasErrors) return 1;
-  if (strict && hasWarnings) return 1;
-  return 0;
+  const severities = new Set(certification.failures.map((f) => f.severity));
+  if (severities.has('critical') || severities.has('error')) return 1;
+  if (strict && severities.has('warning')) return 1;
+  return meetsLevel(certification.level, target) ? 0 : 1;
 }
 
-/**
- * Analyze HTML and return statistics
- */
-async function analyzeHTML(html: string): Promise<Record<string, unknown>> {
-  const document = await parseHTML(html, { includeStateGraph: true });
+function renderDocument(document: SemanticDocument, options: ParseOptions): string {
+  const paint = createPainter(!options.output && colorEnabled(options.color, process.stdout));
+  const dim = createPainter(colorEnabled(options.color, process.stderr));
 
-  const roleCounts: Record<string, number> = {};
-  const intentCounts: Record<string, number> = {};
-  const stateCounts: Record<string, number> = {};
-
-  let totalNodes = 0;
-  let interactiveNodes = 0;
-  let accessibleNodes = 0;
-  let nodesWithIntent = 0;
-
-  const traverse = (node: typeof document.root): void => {
-    totalNodes++;
-
-    roleCounts[node.role] = (roleCounts[node.role] || 0) + 1;
-    stateCounts[node.state] = (stateCounts[node.state] || 0) + 1;
-
-    if (node.intent) {
-      intentCounts[node.intent] = (intentCounts[node.intent] || 0) + 1;
-      nodesWithIntent++;
+  switch (options.format) {
+    case 'tree':
+      return formatTree(document, paint);
+    case 'toon': {
+      const s = estimateTokenSavings(document);
+      info(dim('dim', `TOON format: ~${s.savingsPercent}% token savings (${s.toonTokens} vs ${s.jsonTokens} tokens)`));
+      return toTOON(document);
     }
-
-    if (node.a11y.focusable) interactiveNodes++;
-    if (node.a11y.name) accessibleNodes++;
-
-    node.children.forEach(traverse);
-  };
-
-  traverse(document.root);
-
-  return {
-    summary: {
-      totalNodes,
-      interactiveNodes,
-      accessibleNodes,
-      nodesWithIntent,
-      landmarks: document.landmarks.length,
-      interactables: document.interactables.length,
-      certificationLevel: document.agentReady.level,
-      certificationScore: document.agentReady.score,
-    },
-    roles: roleCounts,
-    intents: intentCounts,
-    states: stateCounts,
-    stateGraphNodes: document.stateGraph.size,
-  };
-}
-
-/**
- * Print statistics
- */
-function printStats(stats: Record<string, unknown>): void {
-  console.log();
-  console.log(chalk.bold('SemanticDOM Statistics'));
-  console.log(chalk.dim('═'.repeat(50)));
-  console.log();
-
-  const summary = stats.summary as Record<string, number | string>;
-  console.log(chalk.cyan('Summary:'));
-  console.log(`  Total nodes: ${summary.totalNodes}`);
-  console.log(`  Interactive: ${summary.interactiveNodes}`);
-  console.log(`  Accessible:  ${summary.accessibleNodes}`);
-  console.log(`  With intent: ${summary.nodesWithIntent}`);
-  console.log(`  Landmarks:   ${summary.landmarks}`);
-  console.log(`  Certification: ${summary.certificationLevel} (${summary.certificationScore}/100)`);
-  console.log();
-
-  const roles = stats.roles as Record<string, number>;
-  console.log(chalk.cyan('Role Distribution:'));
-  const sortedRoles = Object.entries(roles).sort((a, b) => b[1] - a[1]);
-  for (const [role, count] of sortedRoles.slice(0, 10)) {
-    const bar = '█'.repeat(Math.min(count, 20));
-    console.log(`  ${role.padEnd(15)} ${count.toString().padStart(4)} ${chalk.blue(bar)}`);
-  }
-  if (sortedRoles.length > 10) {
-    console.log(`  ... and ${sortedRoles.length - 10} more roles`);
+    case 'summary': {
+      const s = compareTokenUsage(document);
+      info(dim('dim', `Summary format: ~${s.savingsPercent}% token savings (${s.summary} vs ${s.json} tokens)`));
+      return toAgentSummary(document);
+    }
+    case 'oneline':
+      return toOneLiner(document);
+    default:
+      return JSON.stringify(
+        toSerializable(document, { includeStateGraph: options.stateGraph !== false }),
+        null,
+        2
+      );
   }
 }
 
-/**
- * Format document as JSON
- */
-function formatAsJSON(document: SemanticDocument): string {
-  const serializeNode = (node: typeof document.root): Record<string, unknown> => ({
-    id: node.id,
-    role: node.role,
-    label: node.label,
-    intent: node.intent,
-    state: node.state,
-    selector: node.selector,
-    a11y: node.a11y,
-    children: node.children.map(serializeNode),
-  });
-
-  return JSON.stringify(
-    {
-      version: document.version,
-      standard: document.standard,
-      url: document.url,
-      title: document.title,
-      language: document.language,
-      generatedAt: document.generatedAt,
-      agentReady: document.agentReady,
-      root: serializeNode(document.root),
-    },
-    null,
-    2
-  );
+function eslintConfig(options: { strict?: boolean }): string {
+  const preset = options.strict ? 'strict' : 'recommended';
+  return [
+    '// eslint.config.js',
+    "import semanticDom from 'semantic-dom-ssg/eslint-plugin';",
+    '',
+    'export default [',
+    `  semanticDom.configs['flat/${preset}'],`,
+    '];',
+  ].join('\n');
 }
 
-/**
- * Format document as tree
- */
-function formatAsTree(document: SemanticDocument): string {
-  const lines: string[] = [];
+/** Build the CLI program */
+export function createProgram(): Command {
+  const program = new Command();
 
-  const printNode = (node: typeof document.root, prefix: string, isLast: boolean): void => {
-    const connector = isLast ? '└── ' : '├── ';
-    const roleColor = getNodeColor(node.role);
-    const stateIndicator = node.state !== 'idle' ? ` [${node.state}]` : '';
-    const intentIndicator = node.intent ? ` → ${node.intent}` : '';
+  program
+    .name('semantic-dom')
+    .description('SemanticDOM & SSG validation and generation CLI')
+    .version(VERSION)
+    .showHelpAfterError();
 
-    lines.push(
-      `${prefix}${connector}${roleColor(node.role)}${stateIndicator}${intentIndicator}` +
-        (node.label && node.label !== node.role ? ` "${truncate(node.label, 30)}"` : '')
-    );
+  program
+    .command('validate')
+    .description('Validate HTML for SemanticDOM compliance')
+    .argument('<file>', 'HTML file to validate (use - for stdin)')
+    .addOption(
+      new Option('-l, --level <level>', 'Certification level the document must reach')
+        .choices([...CERTIFICATION_LEVELS])
+        .default('standard')
+    )
+    .addOption(formatOption(['text', 'json'], 'text'))
+    .addOption(urlOption())
+    .option('--strict', 'Fail on warnings')
+    .option('--no-color', 'Disable colored output')
+    .action(async (file: string, options: ValidateOptions) => {
+      const document = await parseHTML(
+        await readInput(file),
+        { targetCertification: options.level },
+        options.url
+      );
+      const certification = document.agentReady;
 
-    const childPrefix = prefix + (isLast ? '    ' : '│   ');
-    node.children.forEach((child, i) => {
-      printNode(child, childPrefix, i === node.children.length - 1);
+      if (options.format === 'json') {
+        print(JSON.stringify({ certification, truncated: document.truncated === true }, null, 2));
+      } else {
+        print(formatValidation(certification, createPainter(colorEnabled(options.color, process.stdout))));
+      }
+      process.exitCode = validationExitCode(certification, options.level, options.strict ?? false);
     });
-  };
 
-  printNode(document.root, '', true);
-  return lines.join('\n');
+  program
+    .command('parse')
+    .description('Parse HTML and output SemanticDOM structure')
+    .argument('<file>', 'HTML file to parse (use - for stdin)')
+    .option('-o, --output <file>', 'Output file (default: stdout)')
+    .addOption(formatOption(['json', 'tree', 'toon', 'summary', 'oneline'], 'json'))
+    .addOption(urlOption())
+    .option('--max-nodes <count>', 'Stop after this many nodes', positiveInt)
+    .option('--no-state-graph', 'Exclude state graph from output')
+    .option('--no-bounds', 'Accepted for compatibility; bounds are never computed outside a browser')
+    .option('--no-color', 'Disable colored output')
+    .action(async (file: string, options: ParseOptions) => {
+      const document = await parseHTML(
+        await readInput(file),
+        { includeStateGraph: options.stateGraph !== false, maxNodes: options.maxNodes },
+        options.url
+      );
+      if (document.truncated) info('Warning: document was truncated (node or depth limit reached)');
+
+      const output = renderDocument(document, options);
+      if (options.output) {
+        await writeOutput(options.output, output + '\n');
+        info(`Output written to ${options.output}`);
+      } else {
+        print(output);
+      }
+    });
+
+  program
+    .command('stats')
+    .description('Show statistics about HTML semantic structure')
+    .argument('<file>', 'HTML file to analyze (use - for stdin)')
+    .addOption(formatOption(['text', 'json'], 'text'))
+    .option('--no-color', 'Disable colored output')
+    .action(async (file: string, options: TextOrJson) => {
+      const stats = analyzeDocument(await parseHTML(await readInput(file)));
+      print(
+        options.format === 'json'
+          ? JSON.stringify(stats, null, 2)
+          : formatStats(stats, createPainter(colorEnabled(options.color, process.stdout)))
+      );
+    });
+
+  program
+    .command('tokens')
+    .description('Compare estimated token usage between output formats')
+    .argument('<file>', 'HTML file to analyze (use - for stdin)')
+    .addOption(formatOption(['text', 'json'], 'text'))
+    .action(async (file: string, options: TextOrJson) => {
+      const document = await parseHTML(await readInput(file));
+      const toon = estimateTokenSavings(document);
+      const result = {
+        json: toon.jsonTokens,
+        toon: toon.toonTokens,
+        summary: compareTokenUsage(document).summary,
+        oneline: Math.ceil(toOneLiner(document).length / 4),
+      };
+      if (options.format === 'json') {
+        print(JSON.stringify(result, null, 2));
+        return;
+      }
+      print('Estimated tokens (~4 characters per token):');
+      for (const [name, tokens] of Object.entries(result)) {
+        const saved = result.json > 0 ? Math.floor((1 - tokens / result.json) * 100) : 0;
+        print(`  ${name.padEnd(8)} ${String(tokens).padStart(8)}${name === 'json' ? '' : `  (${saved}% smaller)`}`);
+      }
+    });
+
+  program
+    .command('mcp')
+    .description('Serve one HTML file to an MCP client over stdio')
+    .argument('<file>', 'HTML file to serve')
+    .addOption(urlOption())
+    .action(async (file: string, options: { url?: string }) => {
+      if (file === '-') throw new Error('The mcp command needs a file path; stdin carries the protocol.');
+      // Parse once up front so a bad file fails before the client connects.
+      let document = await parseHTML(await readInput(file), {}, options.url);
+      await serveStdio({
+        getDocument: async () => {
+          try {
+            document = await parseHTML(await readInput(file), {}, options.url);
+          } catch {
+            // Keep serving the last good parse if the file is briefly unreadable.
+          }
+          return document;
+        },
+      });
+    });
+
+  program
+    .command('init')
+    .description('Print an ESLint flat config that enables the SemanticDOM rules')
+    .option('--strict', 'Use the strict rule set')
+    .option('--react', 'Accepted for compatibility; the rules already cover JSX')
+    .option('--eslint', 'Accepted for compatibility')
+    .action((options: { strict?: boolean }) => {
+      print(eslintConfig(options));
+    });
+
+  return program;
 }
 
-/**
- * Get color for node role
- */
-function getNodeColor(role: string): (s: string) => string {
-  const interactiveRoles = ['button', 'link', 'textbox', 'checkbox', 'radio'];
-  const landmarkRoles = ['main', 'navigation', 'header', 'footer', 'aside'];
-
-  if (interactiveRoles.includes(role)) return chalk.cyan;
-  if (landmarkRoles.includes(role)) return chalk.green;
-  return chalk.white;
-}
-
-/**
- * Truncate string
- */
-function truncate(str: string, len: number): string {
-  if (str.length <= len) return str;
-  return str.slice(0, len - 3) + '...';
-}
-
-/**
- * Generate configuration
- */
-function generateConfig(options: { react?: boolean; eslint?: boolean }): string {
-  const config: Record<string, unknown> = {
-    extends: ['semantic-dom/recommended'],
-    rules: {
-      'semantic-dom/require-accessible-name': 'error',
-      'semantic-dom/valid-role': 'warn',
-      'semantic-dom/semantic-intent': 'warn',
-    },
-  };
-
-  if (options.react) {
-    (config.extends as string[]).push('semantic-dom/react');
-    config.rules = {
-      ...config.rules as object,
-      'semantic-dom/react-hooks': 'error',
-    };
+/** Run the CLI with the given arguments (defaults to process.argv) */
+export async function run(argv: readonly string[] = process.argv): Promise<void> {
+  try {
+    await createProgram().parseAsync([...argv]);
+  } catch (error) {
+    info(`Error: ${error instanceof Error ? error.message : String(error)}`);
+    process.exitCode = 1;
   }
-
-  return JSON.stringify(config, null, 2);
 }
-
-// Parse CLI arguments
-program.parse();

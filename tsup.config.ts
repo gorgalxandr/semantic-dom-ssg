@@ -1,8 +1,24 @@
+import { readFileSync } from 'node:fs';
 import { defineConfig } from 'tsup';
 
+const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf-8')) as {
+  version: string;
+};
+
+const shared = {
+  dts: true,
+  splitting: false,
+  sourcemap: true,
+  treeshake: true,
+  minify: false,
+  target: 'es2022',
+  define: { __PKG_VERSION__: JSON.stringify(pkg.version) },
+} as const;
+
 export default defineConfig([
-  // Main library entries (no shebang)
+  // Library entries, usable from ESM and CommonJS
   {
+    ...shared,
     entry: {
       index: 'typescript/src/index.ts',
       react: 'typescript/src/react/index.ts',
@@ -13,31 +29,27 @@ export default defineConfig([
       summary: 'typescript/src/summary/index.ts',
     },
     format: ['esm', 'cjs'],
-    dts: true,
-    splitting: false,
-    sourcemap: true,
-    clean: true,
-    treeshake: true,
-    minify: false,
-    external: ['react', 'react-dom', 'jsdom'],
+    external: ['react', 'react-dom', 'jsdom', 'eslint'],
     esbuildOptions(options) {
       options.jsx = 'automatic';
     },
   },
-  // CLI entry (with shebang)
+  // CLI library (Node.js, ESM only)
   {
-    entry: {
-      cli: 'typescript/src/cli/index.ts',
-    },
+    ...shared,
+    entry: { cli: 'typescript/src/cli/index.ts' },
     format: ['esm'],
-    dts: true,
-    splitting: false,
-    sourcemap: true,
-    treeshake: true,
-    minify: false,
+    platform: 'node',
     external: ['jsdom'],
-    banner: {
-      js: '#!/usr/bin/env node',
-    },
+  },
+  // CLI executable (with shebang)
+  {
+    ...shared,
+    dts: false,
+    entry: { bin: 'typescript/src/cli/bin.ts' },
+    format: ['esm'],
+    platform: 'node',
+    external: ['jsdom'],
+    banner: { js: '#!/usr/bin/env node' },
   },
 ]);

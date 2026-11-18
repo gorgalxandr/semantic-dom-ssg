@@ -14,16 +14,15 @@
 //!
 //! ## Quick Start
 //!
-//! ```rust,no_run
+//! ```rust
 //! use semantic_dom_ssg::{SemanticDOM, Config};
 //!
-//! let html = r#"<html><body><main><button>Submit</button></main></body></html>"#;
+//! let html = r#"<html><body><main><button id="go">Submit</button></main></body></html>"#;
 //! let sdom = SemanticDOM::parse(html, Config::default()).unwrap();
 //!
-//! // O(1) lookup by iterating index
-//! for (id, node) in &sdom.index {
-//!     println!("{}: {}", id, node.label);
-//! }
+//! // O(1) lookup by semantic ID
+//! let button = sdom.get("sdom_go").unwrap();
+//! assert_eq!(button.label, "Submit");
 //!
 //! // Token-efficient summary (~100 tokens)
 //! let summary = sdom.to_agent_summary();
@@ -32,33 +31,50 @@
 //!
 //! ## Security
 //!
-//! This crate implements security hardening:
-//! - Input size limits (10MB default)
-//! - URL protocol validation (https, http, file only)
+//! The input document is treated as untrusted:
+//! - Input size limits (10MB default) on every entry point
+//! - Element nesting is limited to [`MAX_NESTING_DEPTH`]; parsing and
+//!   analysis are iterative and linear in the input size
+//! - URL protocol validation (https, http, file only), credentials removed
+//! - Labels, names and titles are reduced to single-line text with control
+//!   characters removed, so page content cannot forge summary lines
+//! - Form control values (passwords, textarea contents) are never read
 //! - No script execution (HTML parsing only)
 
+#![forbid(unsafe_code)]
 #![warn(missing_docs)]
 #![warn(clippy::all)]
 #![allow(clippy::module_name_repetitions)]
 
-mod types;
-mod parser;
 mod certification;
-mod summary;
+mod parser;
+mod sanitize;
 mod security;
+mod summary;
+mod types;
 
-pub use types::*;
+pub use certification::{
+    AgentCertification, CertificationLevel, CertificationStats, CheckCategory, ValidationCheck,
+};
 pub use parser::SemanticDOM;
-pub use certification::{AgentCertification, CertificationLevel, ValidationCheck};
-pub use summary::{to_agent_summary, to_one_liner, to_nav_summary, to_audio_summary, compare_token_usage, TokenComparison};
+pub use sanitize::sanitize_text;
 pub use security::{validate_url, SecurityConfig};
+pub use summary::{
+    compare_token_usage, to_agent_summary, to_audio_summary, to_nav_summary, to_one_liner,
+    TokenComparison,
+};
+pub use types::*;
 
 use thiserror::Error;
 
 /// Errors that can occur during SemanticDOM operations
 #[derive(Error, Debug)]
+#[non_exhaustive]
 pub enum Error {
     /// Input exceeds maximum size limit
+    ///
+    /// For streamed input (`SemanticDOM::from_reader`) reading stops as soon
+    /// as the limit is crossed, so `actual_size` is then a lower bound.
     #[error("Input exceeds maximum size of {max_size} bytes (got {actual_size})")]
     InputTooLarge {
         /// Maximum allowed size
@@ -74,7 +90,21 @@ pub enum Error {
         protocol: String,
     },
 
-    /// HTML parsing error
+    /// URL is malformed or too long
+    #[error("Invalid URL: {reason}")]
+    InvalidUrl {
+        /// Why the URL was rejected
+        reason: String,
+    },
+
+    /// Elements are nested deeper than [`MAX_NESTING_DEPTH`]
+    #[error("HTML elements are nested deeper than {max_depth} levels")]
+    NestingTooDeep {
+        /// Maximum supported nesting depth
+        max_depth: usize,
+    },
+
+    /// HTML parsing or serialization error
     #[error("Failed to parse HTML: {0}")]
     ParseError(String),
 
@@ -93,20 +123,25 @@ pub struct Config {
     pub max_input_size: usize,
     /// ID prefix for generated semantic IDs
     pub id_prefix: String,
-    /// Maximum tree depth to parse
+    /// Maximum element nesting depth to analyse (default: 50)
+    ///
+    /// The `<html>` element is depth 1. Elements nested deeper are skipped
+    /// together with their subtrees and [`SemanticDOM::truncated`] is set.
     pub max_depth: usize,
-    /// Elements to exclude from parsing
+    /// Elements to exclude from parsing, together with everything inside
+    /// them (lowercase tag names)
     pub exclude_tags: Vec<String>,
     /// Whether to generate state graph
     pub include_state_graph: bool,
-    /// Whether to run certification checks
+    /// Reserved: certification is not run during parsing. Call
+    /// [`AgentCertification::certify`] on the parsed document instead.
     pub validate: bool,
 }
 
 impl Default for Config {
     fn default() -> Self {
         Self {
-            max_input_size: 10 * 1024 * 1024, // 10MB
+            max_input_size: security::DEFAULT_MAX_INPUT_SIZE,
             id_prefix: "sdom".to_string(),
             max_depth: 50,
             exclude_tags: vec![
@@ -121,90 +156,28 @@ impl Default for Config {
     }
 }
 
+/// Maximum element nesting depth accepted by the parser
+///
+/// HTML tree construction costs time proportional to the nesting depth for
+/// every tag, so unbounded nesting lets a small document consume minutes of
+/// CPU. Parsing stops with [`Error::NestingTooDeep`] beyond this depth (the
+/// same limit browsers apply). [`Config::max_depth`] separately limits how
+/// deep the analysis looks.
+pub const MAX_NESTING_DEPTH: usize = 512;
+
+/// Maximum length of a node label, in characters
+pub const MAX_LABEL_LENGTH: usize = 50;
+
+/// Maximum length of an accessible name or document title, in characters
+pub const MAX_NAME_LENGTH: usize = 200;
+
 /// Standard reference
 pub const STANDARD: &str = "ISO/IEC-SDOM-SSG-DRAFT-2024";
 
 /// Crate version
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_parse_simple_html() {
-        let html = r##"
-            <html>
-            <body>
-                <nav>
-                    <a href="#home">Home</a>
-                    <a href="#about">About</a>
-                </nav>
-                <main>
-                    <h1>Welcome</h1>
-                    <button>Click me</button>
-                </main>
-            </body>
-            </html>
-        "##;
-
-        let result = SemanticDOM::parse(html, Config::default());
-        assert!(result.is_ok());
-
-        let sdom = result.unwrap();
-        assert!(!sdom.landmarks.is_empty());
-        assert!(!sdom.interactables.is_empty());
-    }
-
-    #[test]
-    fn test_o1_lookup() {
-        let html = r#"<html><body><button id="test-btn">Test</button></body></html>"#;
-        let sdom = SemanticDOM::parse(html, Config::default()).unwrap();
-
-        // Lookup should be O(1) via HashMap
-        let node = sdom.index.values().find(|n| n.role == SemanticRole::Button);
-        assert!(node.is_some());
-    }
-
-    #[test]
-    fn test_agent_summary() {
-        let html = r##"
-            <html>
-            <body>
-                <nav><a href="#home">Home</a></nav>
-                <main><button>Submit</button></main>
-            </body>
-            </html>
-        "##;
-
-        let sdom = SemanticDOM::parse(html, Config::default()).unwrap();
-        let summary = sdom.to_agent_summary();
-
-        assert!(summary.contains("LANDMARKS:"));
-        assert!(summary.contains("ACTIONS:"));
-    }
-
-    #[test]
-    fn test_input_size_limit() {
-        let config = Config {
-            max_input_size: 100,
-            ..Default::default()
-        };
-
-        let html = "x".repeat(200);
-        let result = SemanticDOM::parse(&html, config);
-
-        assert!(matches!(result, Err(Error::InputTooLarge { .. })));
-    }
-
-    #[test]
-    fn test_url_validation() {
-        assert!(validate_url("https://example.com").is_ok());
-        assert!(validate_url("http://example.com").is_ok());
-        assert!(validate_url("file:///path/to/file").is_ok());
-        assert!(validate_url("/relative/path").is_ok());
-
-        assert!(validate_url("javascript:alert(1)").is_err());
-        assert!(validate_url("data:text/html,<script>").is_err());
-    }
-}
+/// Compiles and runs the README examples as doctests
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+struct ReadmeDoctests;

@@ -9,6 +9,8 @@
  */
 
 import type { SemanticDocument, SemanticNode } from '../core/types.js';
+import { LIMITS } from '../core/constants.js';
+import { cleanText, sanitizeTarget } from '../core/security.js';
 
 /**
  * Options for agent summary generation
@@ -27,6 +29,12 @@ export interface AgentSummaryOptions {
   /** Include resource URLs if available (default: true) */
   includeResourceUrls?: boolean;
 }
+
+/**
+ * Selectors are the handle an agent acts on, so they are given enough room to
+ * stay usable; a selector cut short matches nothing.
+ */
+const SELECTOR_WIDTH = 120;
 
 const DEFAULT_OPTIONS: Required<AgentSummaryOptions> = {
   includeInteractables: true,
@@ -72,11 +80,11 @@ export function toAgentSummary(
 
   // Header (minimal metadata)
   const domain = extractDomain(document.url);
-  lines.push(`SITE: ${domain || 'local'}`);
+  lines.push(`SITE: ${truncate(domain || 'local', 80)}`);
   if (document.title) {
     lines.push(`TITLE: ${truncate(document.title, 50)}`);
   }
-  lines.push(`LANG: ${document.language || 'en'}`);
+  lines.push(`LANG: ${truncate(document.language || 'en', 20)}`);
 
   // Certification (one line)
   if (opts.includeCertification) {
@@ -91,8 +99,8 @@ export function toAgentSummary(
     lines.push('LANDMARKS:');
     const landmarks = document.landmarks.slice(0, opts.maxLandmarks);
     for (const lm of landmarks) {
-      const selector = truncate(lm.selector || '', 30);
-      lines.push(`${lm.role}: ${truncate(lm.label, 25)} | ${selector}`);
+      const selector = truncate(lm.selector || '', SELECTOR_WIDTH);
+      lines.push(`${truncate(lm.role, 20)}: ${truncate(lm.label, 25)} | ${selector}`);
     }
     if (document.landmarks.length > opts.maxLandmarks) {
       lines.push(`... +${document.landmarks.length - opts.maxLandmarks} more`);
@@ -105,11 +113,11 @@ export function toAgentSummary(
     lines.push('ACTIONS:');
     const items = document.interactables.slice(0, opts.maxInteractables);
     for (const item of items) {
-      const selector = truncate(item.selector || '', 25);
-      const intent = item.intent || '-';
+      const selector = truncate(item.selector || '', SELECTOR_WIDTH);
+      const intent = truncate(item.intent || '', 32);
       const url = opts.includeResourceUrls ? extractResourceUrl(item) : '';
       const urlSuffix = url ? ` | ${url}` : '';
-      lines.push(`${item.role}: ${truncate(item.label, 20)} | ${selector} | ${intent}${urlSuffix}`);
+      lines.push(`${truncate(item.role, 20)}: ${truncate(item.label, 20)} | ${selector} | ${intent}${urlSuffix}`);
     }
     if (document.interactables.length > opts.maxInteractables) {
       lines.push(`... +${document.interactables.length - opts.maxInteractables} more`);
@@ -129,7 +137,7 @@ export function toAgentSummary(
 export function toOneLiner(document: SemanticDocument): string {
   const domain = extractDomain(document.url) || 'local';
   const cert = document.agentReady;
-  return `${domain} | ${cert.level} (${cert.score}) | ${document.landmarks.length} landmarks | ${document.interactables.length} actions`;
+  return `${truncate(domain, 80)} | ${cert.level} (${cert.score}) | ${document.landmarks.length} landmarks | ${document.interactables.length} actions`;
 }
 
 /**
@@ -140,7 +148,7 @@ export function toNavSummary(document: SemanticDocument): string {
   const lines: string[] = [];
   const domain = extractDomain(document.url) || '';
 
-  lines.push(`NAV: ${domain}`);
+  lines.push(`NAV: ${truncate(domain, 80)}`);
 
   // Extract navigation links
   const navItems = document.interactables.filter(
@@ -149,7 +157,7 @@ export function toNavSummary(document: SemanticDocument): string {
 
   for (const item of navItems.slice(0, 15)) {
     const href = extractHref(item);
-    lines.push(`${truncate(item.label, 20)}: ${href || item.selector || '-'}`);
+    lines.push(`${truncate(item.label, 20)}: ${truncate(href || item.selector, SELECTOR_WIDTH)}`);
   }
 
   return lines.join('\n');
@@ -218,7 +226,7 @@ export function compareTokenUsage(document: SemanticDocument): {
   const summaryTokens = estimateSummaryTokens(summary);
   const jsonTokens = Math.ceil(json.length / 4);
   const savings = jsonTokens - summaryTokens;
-  const savingsPercent = Math.round((savings / jsonTokens) * 100);
+  const savingsPercent = jsonTokens > 0 ? Math.round((savings / jsonTokens) * 100) : 0;
 
   return {
     summary: summaryTokens,
@@ -230,10 +238,19 @@ export function compareTokenUsage(document: SemanticDocument): {
 
 // --- Helpers ---
 
+/**
+ * Fit a value into one summary field. Documents built by the parser are
+ * already single-line, but summaries are also generated from deserialized or
+ * hand-built documents, so line breaks and the field separator are
+ * neutralised here as well: a label must never be able to start a new line
+ * (and so impersonate a header such as `CERT:`) or add a column.
+ */
 function truncate(str: string, maxLen: number): string {
-  if (!str) return '-';
-  if (str.length <= maxLen) return str;
-  return str.slice(0, maxLen - 2) + '..';
+  const text = cleanText(str, LIMITS.maxLabelLength).replaceAll('|', '/');
+  if (!text) return '-';
+  const chars = Array.from(text);
+  if (chars.length <= maxLen) return text;
+  return chars.slice(0, maxLen - 2).join('') + '..';
 }
 
 function extractDomain(url: string): string {
@@ -246,28 +263,21 @@ function extractDomain(url: string): string {
   }
 }
 
-function extractHref(node: SemanticNode): string {
-  // Check metadata for href
-  if (node.metadata && typeof node.metadata === 'object') {
-    const href = (node.metadata as Record<string, unknown>).href;
-    if (typeof href === 'string') return href;
+/** Read a URL-valued metadata field, re-validated so unsafe targets never print */
+function metadataUrl(node: SemanticNode, keys: readonly string[]): string {
+  const meta = node.metadata;
+  if (!meta || typeof meta !== 'object') return '';
+  for (const key of keys) {
+    const target = sanitizeTarget(meta[key]);
+    if (target) return truncate(target, 200);
   }
-
-  // Try to extract from selector (e.g., a[href="#about"])
-  const selectorMatch = node.selector?.match(/\[href=["']([^"']+)["']\]/);
-  if (selectorMatch) return selectorMatch[1];
-
   return '';
 }
 
-function extractResourceUrl(node: SemanticNode): string {
-  // Check metadata for src/href
-  if (node.metadata && typeof node.metadata === 'object') {
-    const meta = node.metadata as Record<string, unknown>;
-    if (typeof meta.src === 'string') return meta.src;
-    if (typeof meta.href === 'string') return meta.href;
-    if (typeof meta.url === 'string') return meta.url;
-  }
+function extractHref(node: SemanticNode): string {
+  return metadataUrl(node, ['href']);
+}
 
-  return '';
+function extractResourceUrl(node: SemanticNode): string {
+  return metadataUrl(node, ['src', 'href', 'url']);
 }

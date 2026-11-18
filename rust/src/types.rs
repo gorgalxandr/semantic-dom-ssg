@@ -3,8 +3,10 @@
 //! This module defines the semantic types used throughout the crate,
 //! including roles, intents, and node structures.
 
-use ahash::AHashMap;
-use serde::{Deserialize, Serialize};
+use ahash::{AHashMap, AHashSet};
+use serde::{Deserialize, Serialize, Serializer};
+use std::collections::BTreeMap;
+use std::fmt;
 
 /// Semantic role for an element based on ARIA and HTML5 semantics
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -101,6 +103,12 @@ impl SemanticRole {
     }
 }
 
+impl fmt::Display for SemanticRole {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
 /// User intent classification for an element
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -169,8 +177,12 @@ pub struct SemanticNode {
     /// Parent node ID
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parent: Option<String>,
-    /// Additional metadata
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// Additional metadata (for inputs: `type`, the input type)
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_sorted",
+        default
+    )]
     pub metadata: Option<AHashMap<String, String>>,
     /// Depth in the tree (0 = root)
     pub depth: usize,
@@ -193,6 +205,17 @@ impl SemanticNode {
             depth: 0,
         }
     }
+}
+
+/// Serialize metadata with sorted keys so output is reproducible
+fn serialize_sorted<S: Serializer>(
+    metadata: &Option<AHashMap<String, String>>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    metadata
+        .as_ref()
+        .map(|m| m.iter().collect::<BTreeMap<_, _>>())
+        .serialize(serializer)
 }
 
 /// A state in the Semantic State Graph
@@ -234,7 +257,7 @@ pub struct Transition {
 }
 
 /// The Semantic State Graph
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct StateGraph {
     /// All states in the graph
     pub states: Vec<State>,
@@ -245,16 +268,6 @@ pub struct StateGraph {
     pub initial_state: Option<String>,
 }
 
-impl Default for StateGraph {
-    fn default() -> Self {
-        Self {
-            states: Vec::new(),
-            transitions: Vec::new(),
-            initial_state: None,
-        }
-    }
-}
-
 impl StateGraph {
     /// Create a new empty state graph
     pub fn new() -> Self {
@@ -263,15 +276,10 @@ impl StateGraph {
 
     /// Check if the graph is deterministic (no ambiguous transitions)
     pub fn is_deterministic(&self) -> bool {
-        let mut seen: AHashMap<(&str, &str), bool> = AHashMap::new();
-        for t in &self.transitions {
-            let key = (t.from.as_str(), t.trigger.as_str());
-            if seen.contains_key(&key) {
-                return false;
-            }
-            seen.insert(key, true);
-        }
-        true
+        let mut seen: AHashSet<(&str, &str)> = AHashSet::new();
+        self.transitions
+            .iter()
+            .all(|t| seen.insert((t.from.as_str(), t.trigger.as_str())))
     }
 
     /// Find all states reachable from the initial state
@@ -281,25 +289,31 @@ impl StateGraph {
             None => return Vec::new(),
         };
 
-        let mut visited: AHashMap<&str, bool> = AHashMap::new();
+        // Adjacency list first: scanning every transition per state would
+        // be quadratic on link-heavy documents.
+        let mut outgoing: AHashMap<&str, Vec<&str>> = AHashMap::new();
+        for t in &self.transitions {
+            outgoing
+                .entry(t.from.as_str())
+                .or_default()
+                .push(t.to.as_str());
+        }
+
+        let mut visited: AHashSet<&str> = AHashSet::new();
         let mut queue = vec![initial.as_str()];
 
         while let Some(state_id) = queue.pop() {
-            if visited.contains_key(state_id) {
+            if !visited.insert(state_id) {
                 continue;
             }
-            visited.insert(state_id, true);
-
-            for t in &self.transitions {
-                if t.from == state_id && !visited.contains_key(t.to.as_str()) {
-                    queue.push(&t.to);
-                }
+            if let Some(targets) = outgoing.get(state_id) {
+                queue.extend(targets.iter().filter(|to| !visited.contains(*to)));
             }
         }
 
         self.states
             .iter()
-            .filter(|s| visited.contains_key(s.id.as_str()))
+            .filter(|s| visited.contains(s.id.as_str()))
             .collect()
     }
 }

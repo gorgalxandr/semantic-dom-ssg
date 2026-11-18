@@ -1,7 +1,7 @@
 {
   "name": "semantic-dom-ssg",
-  "version": "0.2.1",
-  "description": "NPM package implementing ISO/IEC draft standard for SemanticDOM and Semantic State Graph - O(1) lookup, deterministic navigation, agent-ready web interoperability",
+  "version": "0.3.0",
+  "description": "Machine-readable web semantics for AI agents: SemanticDOM and Semantic State Graph with O(1) lookup, deterministic IDs and navigation, token-efficient serialization, MCP server, React hooks and ESLint rules",
   "author": "George Alexander <info@gorgalxandr.com>",
   "license": "MIT",
   "type": "module",
@@ -43,10 +43,6 @@
       "import": {
         "types": "./dist/cli.d.ts",
         "default": "./dist/cli.js"
-      },
-      "require": {
-        "types": "./dist/cli.d.cts",
-        "default": "./dist/cli.cjs"
       }
     },
     "./eslint-plugin": {
@@ -88,28 +84,35 @@
         "types": "./dist/summary.d.cts",
         "default": "./dist/summary.cjs"
       }
-    }
+    },
+    "./package.json": "./package.json"
   },
   "bin": {
-    "semantic-dom": "./dist/cli.js",
-    "ssg-validate": "./dist/cli.js"
+    "semantic-dom": "./dist/bin.js",
+    "ssg-validate": "./dist/bin.js"
   },
   "files": [
     "dist",
+    "!dist/**/*.map",
     "README.md",
+    "CHANGELOG.md",
+    "SECURITY.md",
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsup",
+    "build": "rm -rf dist && tsup",
     "dev": "tsup --watch",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint src --ext .ts,.tsx",
-    "lint:fix": "eslint src --ext .ts,.tsx --fix",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "prepublishOnly": "npm run build && npm run typecheck && npm run test",
-    "clean": "rm -rf dist"
+    "check:sizes": "node scripts/check-file-sizes.mjs",
+    "check:package": "node scripts/check-package.mjs",
+    "verify": "npm run check:sizes && npm run typecheck && npm run lint && npm run test && npm run build && npm run check:package",
+    "prepublishOnly": "npm run verify",
+    "clean": "rm -rf dist coverage"
   },
   "keywords": [
     "semantic-dom",
@@ -141,36 +144,45 @@
   },
   "homepage": "https://github.com/gorgalxandr/semantic-dom-ssg#readme",
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=22.13.0"
   },
   "peerDependencies": {
-    "react": ">=17.0.0"
+    "react": ">=18.0.0",
+    "eslint": ">=9.0.0"
   },
   "peerDependenciesMeta": {
     "react": {
       "optional": true
+    },
+    "eslint": {
+      "optional": true
     }
   },
   "devDependencies": {
-    "@types/eslint": "9.6.1",
-    "@types/jsdom": "27.0.0",
-    "@types/node": "^20.11.0",
-    "@types/react": "^18.2.48",
-    "@typescript-eslint/eslint-plugin": "^6.19.0",
-    "@typescript-eslint/parser": "^6.19.0",
-    "eslint": "^8.56.0",
-    "jsdom": "^24.0.0",
-    "react": "^18.2.0",
-    "tsup": "^8.0.1",
-    "typescript": "^5.3.3",
-    "vitest": "^1.2.0"
+    "@eslint/js": "latest",
+    "@testing-library/react": "16.3.3",
+    "@types/jsdom": "30.0.0",
+    "@types/node": "^22.13.0",
+    "@types/react": "19.3.0",
+    "@vitest/coverage-v8": "5.1.1",
+    "eslint": "10.15.0",
+    "jsdom": "31.0.1",
+    "react": "19.3.1",
+    "react-dom": "latest",
+    "tsup": "9.0.0",
+    "typescript": "~6.0.0",
+    "typescript-eslint": "8.73.0",
+    "vitest": "5.1.1"
   },
   "optionalDependencies": {
-    "jsdom": "^24.0.0"
+    "jsdom": "31.0.1"
   },
   "dependencies": {
-    "@toon-format/toon": "2.1.0",
-    "chalk": "^5.3.0",
-    "commander": "^12.0.0"
+    "@toon-format/toon": "4.4.0",
+    "commander": "15.1.0"
+  },
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public"
   }
 }

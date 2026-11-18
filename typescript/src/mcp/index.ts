@@ -8,11 +8,16 @@
  * @packageDocumentation
  */
 
-import type {
-  SemanticDocument,
-  SemanticId,
-} from '../core/types.js';
-import { toTOON, treeToTOON, landmarksToTOON, interactablesToTOON, stateGraphToTOON } from '../toon/index.js';
+import type { SemanticDocument } from '../core/types.js';
+import { VERSION } from '../core/constants.js';
+import { toSerializable } from '../core/serialize.js';
+import { toTOON } from '../toon/index.js';
+
+export { executeTool } from './tools.js';
+export { getPrompt } from './prompts.js';
+export { createMCPServer, serveStdio, SUPPORTED_PROTOCOL_VERSIONS } from './server.js';
+export type { JSONRPCMessage, JSONRPCResponse, MCPServer, MCPServerOptions } from './server.js';
+export type { MCPPromptResult } from './prompts.js';
 
 /**
  * MCP Resource descriptor for SemanticDOM
@@ -32,7 +37,8 @@ export interface MCPTool {
   description: string;
   inputSchema: {
     type: 'object';
-    properties: Record<string, { type: string; description: string }>;
+    properties: Record<string, { type: string; description: string; enum?: string[] }>;
+    additionalProperties?: boolean;
     required?: string[];
   };
 }
@@ -72,6 +78,19 @@ export interface SemanticDOMMCPCapabilities {
 }
 
 /**
+ * Build the resource URI for a document. Documents parsed without an absolute
+ * URL (the default) are addressed as `semantic-dom://local/`.
+ */
+export function resourceUri(document: SemanticDocument): string {
+  try {
+    const { hostname, pathname } = new URL(document.url);
+    return `semantic-dom://${hostname || 'local'}${pathname || '/'}`;
+  } catch {
+    return 'semantic-dom://local/';
+  }
+}
+
+/**
  * Create MCP resource from SemanticDocument
  */
 export function createResource(
@@ -79,8 +98,8 @@ export function createResource(
   format: 'json' | 'toon' = 'toon'
 ): MCPResource {
   return {
-    uri: `semantic-dom://${new URL(document.url).hostname}${new URL(document.url).pathname}`,
-    mimeType: format === 'toon' ? 'application/toon' : 'application/json',
+    uri: resourceUri(document),
+    mimeType: format === 'toon' ? 'text/toon' : 'application/json',
     name: document.title || 'SemanticDOM Document',
     description: `SemanticDOM structure with ${document.landmarks.length} landmarks, ${document.interactables.length} interactables. Agent certification: ${document.agentReady.level} (${document.agentReady.score}/100)`,
   };
@@ -99,7 +118,7 @@ export function getTools(): MCPTool[] {
         properties: {
           id: {
             type: 'string',
-            description: 'Semantic ID of the element (e.g., "nav-main", "btn-submit")',
+            description: 'Semantic ID of the element, as listed by semantic_list_interactables or semantic_find (e.g., "sdom-button-1k2j3h4g5f")',
           },
         },
         required: ['id'],
@@ -113,7 +132,7 @@ export function getTools(): MCPTool[] {
         properties: {
           landmark: {
             type: 'string',
-            description: 'Landmark role or ID (e.g., "main", "navigation", "nav-primary")',
+            description: 'Landmark role or semantic ID (e.g., "main", "navigation")',
           },
         },
         required: ['landmark'],
@@ -165,6 +184,27 @@ export function getTools(): MCPTool[] {
             description: 'Optional: filter to specific element ID',
           },
         },
+      },
+    },
+    {
+      name: 'semantic_find',
+      description: 'Find elements by visible text, role and/or intent. Returns matching elements with their semantic IDs and selectors.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          text: { type: 'string', description: 'Case-insensitive text to look for in labels and accessible names' },
+          role: { type: 'string', description: 'Restrict to a role (e.g., "button", "link", "textbox")' },
+          intent: { type: 'string', description: 'Restrict to an intent (e.g., "submit", "navigate", "search")' },
+          limit: { type: 'number', description: 'Maximum results (default 20, maximum 100)' },
+        },
+      },
+    },
+    {
+      name: 'semantic_summary',
+      description: 'Get a compact plain-text overview of the page: certification, landmarks and available actions.',
+      inputSchema: {
+        type: 'object',
+        properties: {},
       },
     },
     {
@@ -220,151 +260,6 @@ export function getPrompts(): MCPPrompt[] {
 }
 
 /**
- * Execute MCP tool call
- */
-export function executeTool(
-  document: SemanticDocument,
-  toolName: string,
-  args: Record<string, unknown>
-): MCPToolResult {
-  switch (toolName) {
-    case 'semantic_query': {
-      const id = args.id as string;
-      const node = document.index.get(id as SemanticId);
-      if (!node) {
-        return {
-          content: [{ type: 'text', text: `Element not found: ${id}` }],
-          isError: true,
-        };
-      }
-      return {
-        content: [{
-          type: 'text',
-          text: treeToTOON(node),
-        }],
-      };
-    }
-
-    case 'semantic_navigate': {
-      const landmark = args.landmark as string;
-      const found = document.landmarks.find(
-        (l) => l.role === landmark || l.id === landmark
-      );
-      if (!found) {
-        return {
-          content: [{ type: 'text', text: `Landmark not found: ${landmark}` }],
-          isError: true,
-        };
-      }
-      return {
-        content: [{
-          type: 'text',
-          text: treeToTOON(found),
-        }],
-      };
-    }
-
-    case 'semantic_interact': {
-      const id = args.id as string;
-      const node = document.index.get(id as SemanticId);
-      if (!node) {
-        return {
-          content: [{ type: 'text', text: `Element not found: ${id}` }],
-          isError: true,
-        };
-      }
-      const ssgNode = document.stateGraph.get(id as SemanticId);
-      return {
-        content: [{
-          type: 'text',
-          text: JSON.stringify({
-            id: node.id,
-            role: node.role,
-            label: node.label,
-            intent: node.intent,
-            state: node.state,
-            selector: node.selector,
-            xpath: node.xpath,
-            a11y: node.a11y,
-            stateGraph: ssgNode ? {
-              currentState: ssgNode.currentState,
-              transitions: ssgNode.transitions,
-            } : null,
-          }, null, 2),
-        }],
-      };
-    }
-
-    case 'semantic_list_landmarks': {
-      return {
-        content: [{
-          type: 'text',
-          text: landmarksToTOON(document.landmarks),
-        }],
-      };
-    }
-
-    case 'semantic_list_interactables': {
-      const filter = args.filter as string | undefined;
-      let interactables = document.interactables;
-      if (filter) {
-        interactables = interactables.filter((i) => i.role === filter);
-      }
-      return {
-        content: [{
-          type: 'text',
-          text: interactablesToTOON(interactables),
-        }],
-      };
-    }
-
-    case 'semantic_state_graph': {
-      const id = args.id as SemanticId | undefined;
-      if (id) {
-        const node = document.stateGraph.get(id);
-        if (!node) {
-          return {
-            content: [{ type: 'text', text: `State graph node not found: ${id}` }],
-            isError: true,
-          };
-        }
-        return {
-          content: [{
-            type: 'text',
-            text: JSON.stringify({
-              id,
-              currentState: node.currentState,
-              transitions: node.transitions,
-            }, null, 2),
-          }],
-        };
-      }
-      return {
-        content: [{
-          type: 'text',
-          text: stateGraphToTOON(document.stateGraph),
-        }],
-      };
-    }
-
-    case 'semantic_certification': {
-      return {
-        content: [{
-          type: 'text',
-          text: JSON.stringify(document.agentReady, null, 2),
-        }],
-      };
-    }
-
-    default:
-      return {
-        content: [{ type: 'text', text: `Unknown tool: ${toolName}` }],
-        isError: true,
-      };
-  }
-}
-
-/**
  * Get full MCP capabilities for SemanticDOM
  */
 export function getCapabilities(document: SemanticDocument): SemanticDOMMCPCapabilities {
@@ -385,20 +280,10 @@ export function serializeForMCP(
   if (format === 'toon') {
     return toTOON(document);
   }
-  return JSON.stringify({
-    version: document.version,
-    standard: document.standard,
-    url: document.url,
-    title: document.title,
-    agentReady: document.agentReady,
-    landmarks: document.landmarks.map((l) => ({ id: l.id, role: l.role, label: l.label })),
-    interactables: document.interactables.map((i) => ({
-      id: i.id,
-      role: i.role,
-      label: i.label,
-      intent: i.intent,
-    })),
-  }, null, 2);
+  const { root: _root, stateGraph: _stateGraph, ...overview } = toSerializable(document, {
+    includeStateGraph: false,
+  });
+  return JSON.stringify(overview, null, 2);
 }
 
 /**
@@ -406,10 +291,10 @@ export function serializeForMCP(
  */
 export const SERVER_INFO = {
   name: 'semantic-dom-ssg',
-  version: '0.1.0',
-  protocolVersion: '2024-11-05',
+  version: VERSION,
+  protocolVersion: '2025-06-18',
   capabilities: {
-    resources: { subscribe: false, listChanged: true },
+    resources: { subscribe: false, listChanged: false },
     tools: {},
     prompts: { listChanged: false },
   },

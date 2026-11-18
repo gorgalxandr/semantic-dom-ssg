@@ -1,8 +1,10 @@
 """Core type definitions for SemanticDOM."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Optional
+from typing import Any
 
 
 class SemanticRole(Enum):
@@ -105,17 +107,17 @@ class SemanticNode:
     label: str
     role: SemanticRole
     selector: str
-    intent: Optional[SemanticIntent] = None
-    accessible_name: Optional[str] = None
-    href: Optional[str] = None
+    intent: SemanticIntent | None = None
+    accessible_name: str | None = None
+    href: str | None = None
     children: list[str] = field(default_factory=list)
-    parent: Optional[str] = None
-    metadata: Optional[dict[str, str]] = None
+    parent: str | None = None
+    metadata: dict[str, str] | None = None
     depth: int = 0
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary representation."""
-        result: dict = {
+        result: dict[str, Any] = {
             "id": self.id,
             "label": self.label,
             "role": self.role.value,
@@ -143,12 +145,12 @@ class State:
 
     id: str
     name: str
-    description: Optional[str] = None
-    url_pattern: Optional[str] = None
+    description: str | None = None
+    url_pattern: str | None = None
     is_initial: bool = False
     is_terminal: bool = False
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary representation."""
         return {
             "id": self.id,
@@ -167,12 +169,12 @@ class Transition:
     from_state: str
     to_state: str
     trigger: str
-    action: Optional[str] = None
-    guard: Optional[str] = None
+    action: str | None = None
+    guard: str | None = None
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary representation."""
-        result: dict = {
+        result: dict[str, Any] = {
             "from": self.from_state,
             "to": self.to_state,
             "trigger": self.trigger,
@@ -190,7 +192,7 @@ class StateGraph:
 
     states: list[State] = field(default_factory=list)
     transitions: list[Transition] = field(default_factory=list)
-    initial_state: Optional[str] = None
+    initial_state: str | None = None
 
     def is_deterministic(self) -> bool:
         """Check if the graph is deterministic (no ambiguous transitions)."""
@@ -207,22 +209,22 @@ class StateGraph:
         if not self.initial_state:
             return []
 
+        outgoing: dict[str, list[str]] = {}
+        for t in self.transitions:
+            outgoing.setdefault(t.from_state, []).append(t.to_state)
+
         visited: set[str] = set()
         queue = [self.initial_state]
-
         while queue:
             state_id = queue.pop()
             if state_id in visited:
                 continue
             visited.add(state_id)
-
-            for t in self.transitions:
-                if t.from_state == state_id and t.to_state not in visited:
-                    queue.append(t.to_state)
+            queue.extend(outgoing.get(state_id, ()))
 
         return [s for s in self.states if s.id in visited]
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary representation."""
         return {
             "states": [s.to_dict() for s in self.states],

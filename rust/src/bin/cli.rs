@@ -2,48 +2,72 @@
 //!
 //! Provides command-line access to SemanticDOM parsing, validation,
 //! and token-efficient output formats.
+//!
+//! Exit codes: `0` success, `1` certification below the required level
+//! (`validate --ci`), `2` usage error, `3` input could not be read or parsed.
 
-use clap::{Parser, Subcommand, ValueEnum};
-use semantic_dom_ssg::{AgentCertification, Config, SemanticDOM};
-use std::fs;
-use std::io::{self, Read};
-use std::path::PathBuf;
+use clap::{Args, Parser, Subcommand, ValueEnum};
+use semantic_dom_ssg::{AgentCertification, CertificationLevel, Config, SemanticDOM};
+use std::fmt::Write as _;
+use std::io::{self, Write as _};
+use std::process::ExitCode;
+
+/// Certification is below the level required by `validate --ci`
+const EXIT_VALIDATION_FAILED: u8 = 1;
+/// Input could not be read, is too large, or output could not be produced
+const EXIT_INPUT_ERROR: u8 = 3;
 
 #[derive(Parser)]
-#[command(name = "semantic-dom")]
-#[command(author = "George Alexander <george@consltr.com>")]
-#[command(version)]
+#[command(name = "semantic-dom", author, version)]
 #[command(about = "Machine-readable web semantics for AI agents", long_about = None)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
 }
 
+/// Input options shared by every subcommand
+#[derive(Args)]
+struct InputArgs {
+    /// Input file (use '-' for stdin)
+    #[arg(value_name = "FILE")]
+    input: String,
+
+    /// Maximum input size in bytes
+    #[arg(long, value_name = "BYTES", default_value_t = Config::default().max_input_size)]
+    max_input_size: usize,
+
+    /// Maximum element nesting depth to analyse
+    #[arg(long, value_name = "DEPTH", default_value_t = Config::default().max_depth)]
+    max_depth: usize,
+}
+
 #[derive(Subcommand)]
 enum Commands {
     /// Parse an HTML file and output SemanticDOM
     Parse {
-        /// Input file (use '-' for stdin)
-        #[arg(value_name = "FILE")]
-        input: String,
+        #[command(flatten)]
+        input: InputArgs,
 
         /// Output format
-        #[arg(short, long, default_value = "json")]
+        #[arg(short, long, value_enum, default_value = "json")]
         format: OutputFormat,
 
-        /// Pretty print JSON output
-        #[arg(short, long)]
+        /// Pretty print JSON output (the default; kept for compatibility)
+        #[arg(short, long, conflicts_with = "compact")]
         pretty: bool,
+
+        /// Print JSON on a single line
+        #[arg(short, long)]
+        compact: bool,
     },
 
     /// Validate an HTML file for agent compatibility
     Validate {
-        /// Input file (use '-' for stdin)
-        #[arg(value_name = "FILE")]
-        input: String,
+        #[command(flatten)]
+        input: InputArgs,
 
         /// Minimum certification level required
-        #[arg(short, long, default_value = "a")]
+        #[arg(short, long, value_enum, default_value = "a")]
         level: CertLevel,
 
         /// Exit with error if validation fails (for CI)
@@ -53,9 +77,8 @@ enum Commands {
 
     /// Show token usage comparison between formats
     Tokens {
-        /// Input file (use '-' for stdin)
-        #[arg(value_name = "FILE")]
-        input: String,
+        #[command(flatten)]
+        input: InputArgs,
     },
 }
 
@@ -81,144 +104,159 @@ enum CertLevel {
     Aaa,
 }
 
-fn main() {
+impl From<CertLevel> for CertificationLevel {
+    fn from(level: CertLevel) -> Self {
+        match level {
+            CertLevel::A => CertificationLevel::A,
+            CertLevel::Aa => CertificationLevel::AA,
+            CertLevel::Aaa => CertificationLevel::AAA,
+        }
+    }
+}
+
+fn main() -> ExitCode {
+    // clap reports usage errors on stderr and exits with code 2
     let cli = Cli::parse();
 
+    let (output, code) = match run(cli) {
+        Ok(result) => result,
+        Err(message) => {
+            eprintln!("error: {message}");
+            return ExitCode::from(EXIT_INPUT_ERROR);
+        }
+    };
+
+    match io::stdout().lock().write_all(output.as_bytes()) {
+        Ok(()) => ExitCode::from(code),
+        // The reader went away (e.g. `| head`): not an error
+        Err(e) if e.kind() == io::ErrorKind::BrokenPipe => ExitCode::from(code),
+        Err(e) => {
+            eprintln!("error: cannot write output: {e}");
+            ExitCode::from(EXIT_INPUT_ERROR)
+        }
+    }
+}
+
+/// Execute a command, returning the text for stdout and the exit code
+fn run(cli: Cli) -> Result<(String, u8), String> {
     match cli.command {
         Commands::Parse {
             input,
             format,
             pretty: _,
+            compact,
         } => {
-            let html = read_input(&input).expect("Failed to read input");
-            let config = Config::default();
-
-            match SemanticDOM::parse(&html, config) {
-                Ok(sdom) => {
-                    let output = match format {
-                        OutputFormat::Json => sdom.to_json().unwrap_or_else(|e| {
-                            eprintln!("JSON serialization error: {}", e);
-                            std::process::exit(1);
-                        }),
-                        OutputFormat::Summary => sdom.to_agent_summary(),
-                        OutputFormat::Oneline => sdom.to_one_liner(),
-                        OutputFormat::Nav => semantic_dom_ssg::to_nav_summary(&sdom),
-                    };
-                    println!("{}", output);
-                }
-                Err(e) => {
-                    eprintln!("Parse error: {}", e);
-                    std::process::exit(1);
-                }
+            let sdom = load(&input)?;
+            let mut output = match format {
+                OutputFormat::Json if compact => sdom.to_json_compact(),
+                OutputFormat::Json => sdom.to_json(),
+                OutputFormat::Summary => Ok(sdom.to_agent_summary()),
+                OutputFormat::Oneline => Ok(sdom.to_one_liner()),
+                OutputFormat::Nav => Ok(semantic_dom_ssg::to_nav_summary(&sdom)),
             }
+            .map_err(|e| format!("cannot serialize output: {e}"))?;
+            output.push('\n');
+            Ok((output, 0))
         }
 
         Commands::Validate { input, level, ci } => {
-            let html = read_input(&input).expect("Failed to read input");
-            let config = Config::default();
+            let sdom = load(&input)?;
+            let cert = AgentCertification::certify(&sdom);
+            let required = CertificationLevel::from(level);
+            let meets = cert.level >= required;
 
-            match SemanticDOM::parse(&html, config) {
-                Ok(sdom) => {
-                    let cert = AgentCertification::certify(&sdom);
+            let mut output = certification_report(&cert);
+            let verdict = if meets {
+                format!("✓ Meets {} requirements", required.name())
+            } else {
+                format!("✗ Does not meet {} requirements", required.name())
+            };
+            output.push_str(&verdict);
+            output.push('\n');
 
-                    // Print certification results
-                    println!("{} SemanticDOM Certification", cert.level.badge());
-                    println!("Level: {} (Score: {})", cert.level.name(), cert.score);
-                    println!();
-                    println!("Statistics:");
-                    println!("  Landmarks: {}", cert.stats.landmark_count);
-                    println!("  Interactables: {}", cert.stats.interactable_count);
-                    println!("  Headings: {}", cert.stats.heading_count);
-                    println!(
-                        "  Completeness: {:.1}%",
-                        cert.stats.completeness * 100.0
-                    );
-                    println!();
-                    println!(
-                        "Checks: {}/{} passed",
-                        cert.stats.passed_checks, cert.stats.total_checks
-                    );
-                    println!();
-
-                    // Print failed checks
-                    let failed: Vec<_> = cert.checks.iter().filter(|c| !c.passed).collect();
-                    if !failed.is_empty() {
-                        println!("Failed checks:");
-                        for check in failed {
-                            println!(
-                                "  ❌ {} - {}",
-                                check.id,
-                                check.details.as_deref().unwrap_or(&check.name)
-                            );
-                        }
-                        println!();
-                    }
-
-                    // Check against required level
-                    let required = match level {
-                        CertLevel::A => semantic_dom_ssg::CertificationLevel::A,
-                        CertLevel::Aa => semantic_dom_ssg::CertificationLevel::AA,
-                        CertLevel::Aaa => semantic_dom_ssg::CertificationLevel::AAA,
-                    };
-
-                    if cert.level >= required {
-                        println!("✓ Meets {} requirements", required.name());
-                    } else {
-                        println!("✗ Does not meet {} requirements", required.name());
-                        if ci {
-                            std::process::exit(1);
-                        }
-                    }
-                }
-                Err(e) => {
-                    eprintln!("Parse error: {}", e);
-                    std::process::exit(1);
-                }
-            }
+            let code = if ci && !meets {
+                EXIT_VALIDATION_FAILED
+            } else {
+                0
+            };
+            Ok((output, code))
         }
 
         Commands::Tokens { input } => {
-            let html = read_input(&input).expect("Failed to read input");
-            let config = Config::default();
-
-            match SemanticDOM::parse(&html, config) {
-                Ok(sdom) => {
-                    let comparison = semantic_dom_ssg::compare_token_usage(&sdom);
-
-                    println!("Token Usage Comparison");
-                    println!("======================");
-                    println!();
-                    println!("Format          Tokens    Reduction");
-                    println!("------          ------    ---------");
-                    println!(
-                        "JSON            {:>6}    (baseline)",
-                        comparison.json_tokens
-                    );
-                    println!(
-                        "Summary         {:>6}    {:>5.1}%",
-                        comparison.summary_tokens, comparison.summary_reduction
-                    );
-                    println!(
-                        "One-liner       {:>6}    {:>5.1}%",
-                        comparison.one_liner_tokens, comparison.one_liner_reduction
-                    );
-                }
-                Err(e) => {
-                    eprintln!("Parse error: {}", e);
-                    std::process::exit(1);
-                }
-            }
+            let sdom = load(&input)?;
+            let comparison = semantic_dom_ssg::compare_token_usage(&sdom);
+            let output = format!(
+                "Token Usage Comparison\n\
+                 ======================\n\
+                 \n\
+                 Format          Tokens    Reduction\n\
+                 ------          ------    ---------\n\
+                 JSON            {:>6}    (baseline)\n\
+                 Summary         {:>6}    {:>5.1}%\n\
+                 One-liner       {:>6}    {:>5.1}%\n",
+                comparison.json_tokens,
+                comparison.summary_tokens,
+                comparison.summary_reduction,
+                comparison.one_liner_tokens,
+                comparison.one_liner_reduction
+            );
+            Ok((output, 0))
         }
     }
 }
 
-fn read_input(path: &str) -> io::Result<String> {
-    if path == "-" {
-        let mut buffer = String::new();
-        io::stdin().read_to_string(&mut buffer)?;
-        Ok(buffer)
-    } else {
-        let path = PathBuf::from(path);
-        fs::read_to_string(path)
+/// Render the human-readable certification report
+fn certification_report(cert: &AgentCertification) -> String {
+    let mut out = String::new();
+    // Writing to a String cannot fail
+    let _ = writeln!(out, "{} SemanticDOM Certification", cert.level.badge());
+    let _ = writeln!(out, "Level: {} (Score: {})", cert.level.name(), cert.score);
+    let _ = writeln!(out, "\nStatistics:");
+    let _ = writeln!(out, "  Landmarks: {}", cert.stats.landmark_count);
+    let _ = writeln!(out, "  Interactables: {}", cert.stats.interactable_count);
+    let _ = writeln!(out, "  Headings: {}", cert.stats.heading_count);
+    let _ = writeln!(
+        out,
+        "  Completeness: {:.1}%",
+        cert.stats.completeness * 100.0
+    );
+    let _ = writeln!(
+        out,
+        "\nChecks: {}/{} passed\n",
+        cert.stats.passed_checks, cert.stats.total_checks
+    );
+
+    let failed: Vec<_> = cert.checks.iter().filter(|c| !c.passed).collect();
+    if !failed.is_empty() {
+        let _ = writeln!(out, "Failed checks:");
+        for check in failed {
+            let details = check.details.as_deref().unwrap_or(&check.name);
+            let _ = writeln!(out, "  ❌ {} - {}", check.id, details);
+        }
+        let _ = writeln!(out);
     }
+    out
+}
+
+/// Read and parse the input, enforcing the size limit while reading
+fn load(args: &InputArgs) -> Result<SemanticDOM, String> {
+    let config = Config {
+        max_input_size: args.max_input_size,
+        max_depth: args.max_depth,
+        ..Config::default()
+    };
+
+    let result = if args.input == "-" {
+        SemanticDOM::from_reader(io::stdin().lock(), config)
+    } else {
+        SemanticDOM::from_file(&args.input, config)
+    };
+    result.map_err(|e| {
+        let source = if args.input == "-" {
+            "<stdin>"
+        } else {
+            args.input.as_str()
+        };
+        format!("{source}: {e}")
+    })
 }
