@@ -17,10 +17,13 @@ import type {
   AgentCertification,
 } from '../core/types.js';
 
+/** Largest TOON payload fromTOON will decode (matches the 10MB input limit) */
+const MAX_TOON_LENGTH = 10 * 1024 * 1024;
+
 /**
  * Serializable representation of SemanticNode (without circular refs)
  */
-interface SerializableNode {
+export interface SerializableNode {
   id: string;
   role: string;
   label: string;
@@ -41,7 +44,7 @@ interface SerializableNode {
 /**
  * Serializable document format for TOON encoding
  */
-interface SerializableDocument {
+export interface SerializableDocument {
   version: string;
   standard: string;
   url: string;
@@ -100,7 +103,7 @@ function serializeDocument(doc: SemanticDocument): SerializableDocument {
       transitions: ssgNode.transitions.map((t) => ({
         from: t.from,
         to: t.to,
-        trigger: typeof t.trigger === 'string' ? t.trigger : String(t.trigger),
+        trigger: String(t.trigger),
       })),
     });
   });
@@ -158,11 +161,7 @@ function serializeDocument(doc: SemanticDocument): SerializableDocument {
  */
 export function toTOON(document: SemanticDocument, options?: EncodeOptions): string {
   const serializable = serializeDocument(document);
-  return encode(serializable, {
-    indent: 2,
-    keyFolding: 'safe',
-    ...options,
-  });
+  return encode(serializable, { indentSize: 2, ...options });
 }
 
 /**
@@ -174,13 +173,16 @@ export function toTOON(document: SemanticDocument, options?: EncodeOptions): str
  * @param toon - TOON formatted string
  * @param options - TOON decoding options
  * @returns Decoded document data
+ * @throws ToonDecodeError when the input is not valid TOON
  */
 export function fromTOON(toon: string, options?: DecodeOptions): SerializableDocument {
-  return decode(toon, {
-    strict: true,
-    expandPaths: 'safe',
-    ...options,
-  }) as unknown as SerializableDocument;
+  if (typeof toon !== 'string') {
+    throw new TypeError('fromTOON expects a string');
+  }
+  if (toon.length > MAX_TOON_LENGTH) {
+    throw new RangeError(`TOON input exceeds ${MAX_TOON_LENGTH} characters`);
+  }
+  return decode(toon, { strict: true, ...options }) as unknown as SerializableDocument;
 }
 
 /**
@@ -191,11 +193,7 @@ export function fromTOON(toon: string, options?: DecodeOptions): SerializableDoc
  * @returns TOON formatted string of just the tree
  */
 export function treeToTOON(root: SemanticNode, options?: EncodeOptions): string {
-  return encode(serializeNode(root), {
-    indent: 2,
-    keyFolding: 'safe',
-    ...options,
-  });
+  return encode(serializeNode(root), { indentSize: 2, ...options });
 }
 
 /**
@@ -308,7 +306,7 @@ export function estimateTokenSavings(document: SemanticDocument): {
   const jsonTokens = Math.ceil(jsonStr.length / 4);
   const toonTokens = Math.ceil(toonStr.length / 4);
   const savings = jsonTokens - toonTokens;
-  const savingsPercent = Math.round((savings / jsonTokens) * 100);
+  const savingsPercent = jsonTokens > 0 ? Math.round((savings / jsonTokens) * 100) : 0;
 
   return {
     jsonTokens,

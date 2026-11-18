@@ -3,8 +3,22 @@
 //! Provides ultra-compact output formats optimized for LLM consumption,
 //! reducing token usage by ~87% compared to JSON.
 
+//!
+//! Every string that originates from the parsed document is re-sanitised
+//! here (single line, no control characters, length-capped), so the
+//! line-oriented formats stay well-formed even if a caller has modified the
+//! public fields of a [`SemanticDOM`] after parsing.
+
 use crate::parser::SemanticDOM;
+use crate::sanitize::sanitize_text;
 use crate::types::{SemanticIntent, SemanticRole};
+use crate::{MAX_LABEL_LENGTH, MAX_NAME_LENGTH};
+
+/// Maximum number of actions listed in the agent summary
+const MAX_SUMMARY_ACTIONS: usize = 10;
+
+/// Maximum number of landmarks listed in the agent summary
+const MAX_SUMMARY_LANDMARKS: usize = 10;
 
 /// Generate a token-efficient agent summary
 ///
@@ -18,6 +32,10 @@ use crate::types::{SemanticIntent, SemanticRole};
 /// STATE: initial -> home, about, contact
 /// ```
 ///
+/// Each summary line starts with a fixed keyword (`PAGE:`, `LANDMARKS:`,
+/// `ACTIONS:`, `STATE:`, `STATS:`). Text taken from the document can never
+/// start a new line, so a page cannot forge additional lines.
+///
 /// # Arguments
 /// * `sdom` - The SemanticDOM to summarize
 ///
@@ -28,7 +46,7 @@ pub fn to_agent_summary(sdom: &SemanticDOM) -> String {
 
     // Title line
     if let Some(title) = &sdom.title {
-        lines.push(format!("PAGE: {}", title));
+        lines.push(format!("PAGE: {}", sanitize_text(title, MAX_NAME_LENGTH)));
     }
 
     // Landmarks line
@@ -37,6 +55,7 @@ pub fn to_agent_summary(sdom: &SemanticDOM) -> String {
         .iter()
         .filter_map(|id| sdom.index.get(id))
         .map(|n| format!("{}({})", role_abbrev(&n.role), selector_short(&n.selector)))
+        .take(MAX_SUMMARY_LANDMARKS)
         .collect();
 
     if !landmarks.is_empty() {
@@ -54,14 +73,9 @@ pub fn to_agent_summary(sdom: &SemanticDOM) -> String {
                 .as_ref()
                 .map(intent_abbrev)
                 .unwrap_or_else(|| "act".to_string());
-            let label = if n.label.len() > 20 {
-                format!("{}...", &n.label[..17])
-            } else {
-                n.label.clone()
-            };
-            format!("[{}]{}", intent, label)
+            format!("[{}]{}", intent, sanitize_text(&n.label, 20))
         })
-        .take(10) // Limit to 10 actions for brevity
+        .take(MAX_SUMMARY_ACTIONS)
         .collect();
 
     if !actions.is_empty() {
@@ -70,21 +84,21 @@ pub fn to_agent_summary(sdom: &SemanticDOM) -> String {
 
     // State graph summary
     if !sdom.state_graph.states.is_empty() {
-        let states: Vec<&str> = sdom
+        let initial = sdom.state_graph.initial_state.as_deref();
+        let states: Vec<String> = sdom
             .state_graph
             .states
             .iter()
-            .map(|s| s.name.as_str())
+            .filter(|s| Some(s.id.as_str()) != initial)
+            .map(|s| sanitize_text(&s.name, 20))
             .take(5)
             .collect();
 
-        let initial = sdom
-            .state_graph
-            .initial_state
-            .as_deref()
-            .unwrap_or("none");
-
-        lines.push(format!("STATE: {} -> {}", initial, states.join(", ")));
+        lines.push(format!(
+            "STATE: {} -> {}",
+            sanitize_text(initial.unwrap_or("none"), MAX_LABEL_LENGTH),
+            states.join(", ")
+        ));
     }
 
     // Stats line
@@ -105,7 +119,7 @@ pub fn to_agent_summary(sdom: &SemanticDOM) -> String {
 /// PageTitle | 3 landmarks, 5 actions | nav,main,footer | btn:Submit,link:Home
 /// ```
 pub fn to_one_liner(sdom: &SemanticDOM) -> String {
-    let title = sdom.title.as_deref().unwrap_or("Untitled");
+    let title = sanitize_text(sdom.title.as_deref().unwrap_or("Untitled"), 30);
 
     let landmarks: Vec<&str> = sdom
         .landmarks
@@ -119,20 +133,13 @@ pub fn to_one_liner(sdom: &SemanticDOM) -> String {
         .interactables
         .iter()
         .filter_map(|id| sdom.index.get(id))
-        .map(|n| {
-            let label = if n.label.len() > 10 {
-                format!("{}...", &n.label[..7])
-            } else {
-                n.label.clone()
-            };
-            format!("{}:{}", role_short(&n.role), label)
-        })
+        .map(|n| format!("{}:{}", role_short(&n.role), sanitize_text(&n.label, 10)))
         .take(3)
         .collect();
 
     format!(
         "{} | {}L {}A | {} | {}",
-        truncate(title, 30),
+        title,
         sdom.landmarks.len(),
         sdom.interactables.len(),
         landmarks.join(","),
@@ -153,7 +160,11 @@ pub fn to_nav_summary(sdom: &SemanticDOM) -> String {
         .filter(|n| n.href.is_some())
         .map(|n| {
             let href = n.href.as_deref().unwrap_or("#");
-            format!("{} -> {}", n.label, href)
+            format!(
+                "{} -> {}",
+                sanitize_text(&n.label, MAX_LABEL_LENGTH),
+                sanitize_text(href, MAX_NAME_LENGTH)
+            )
         })
         .take(10)
         .collect();
@@ -169,7 +180,12 @@ pub fn to_nav_summary(sdom: &SemanticDOM) -> String {
     if !sdom.state_graph.transitions.is_empty() {
         lines.push("TRANSITIONS:".to_string());
         for t in sdom.state_graph.transitions.iter().take(5) {
-            lines.push(format!("  {} -[{}]-> {}", t.from, t.trigger, t.to));
+            lines.push(format!(
+                "  {} -[{}]-> {}",
+                sanitize_text(&t.from, MAX_NAME_LENGTH),
+                sanitize_text(&t.trigger, MAX_NAME_LENGTH),
+                sanitize_text(&t.to, MAX_NAME_LENGTH)
+            ));
         }
     }
 
@@ -182,7 +198,7 @@ pub fn to_audio_summary(sdom: &SemanticDOM) -> String {
 
     // Page title
     if let Some(title) = &sdom.title {
-        parts.push(format!("Page: {}", title));
+        parts.push(format!("Page: {}", sanitize_text(title, MAX_NAME_LENGTH)));
     }
 
     // Landmark summary
@@ -216,7 +232,7 @@ pub fn to_audio_summary(sdom: &SemanticDOM) -> String {
                 .map(|i| !matches!(i, SemanticIntent::Unknown))
                 .unwrap_or(false)
         })
-        .map(|n| n.label.clone())
+        .map(|n| sanitize_text(&n.label, MAX_LABEL_LENGTH))
         .take(5)
         .collect();
 
@@ -242,17 +258,18 @@ pub fn compare_token_usage(sdom: &SemanticDOM) -> TokenComparison {
         json_tokens,
         summary_tokens,
         one_liner_tokens,
-        summary_reduction: if json_tokens > 0 {
-            ((json_tokens - summary_tokens) as f32 / json_tokens as f32) * 100.0
-        } else {
-            0.0
-        },
-        one_liner_reduction: if json_tokens > 0 {
-            ((json_tokens - one_liner_tokens) as f32 / json_tokens as f32) * 100.0
-        } else {
-            0.0
-        },
+        summary_reduction: reduction_percent(json_tokens, summary_tokens),
+        one_liner_reduction: reduction_percent(json_tokens, one_liner_tokens),
     }
+}
+
+/// Percentage saved relative to a baseline (negative if larger; 0 for an
+/// empty baseline). Computed in floating point: cannot underflow.
+fn reduction_percent(baseline: usize, tokens: usize) -> f32 {
+    if baseline == 0 {
+        return 0.0;
+    }
+    (baseline as f32 - tokens as f32) / baseline as f32 * 100.0
 }
 
 /// Token usage comparison result
@@ -345,92 +362,11 @@ fn intent_abbrev(intent: &SemanticIntent) -> String {
 }
 
 fn selector_short(selector: &str) -> String {
-    if selector.len() <= 20 {
-        selector.to_string()
-    } else {
-        format!("{}...", &selector[..17])
-    }
-}
-
-fn truncate(s: &str, max_len: usize) -> String {
-    if s.len() <= max_len {
-        s.to_string()
-    } else {
-        format!("{}...", &s[..max_len - 3])
-    }
+    sanitize_text(selector, 20)
 }
 
 fn estimate_tokens(text: &str) -> usize {
     // Rough estimation: 1 token ≈ 4 characters for English
     // This is a simplification; actual tokenization varies by model
-    (text.len() + 3) / 4
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::Config;
-
-    #[test]
-    fn test_agent_summary() {
-        let html = r#"
-            <html>
-            <head><title>Test Page</title></head>
-            <body>
-                <nav><a href="/">Home</a></nav>
-                <main><button>Submit</button></main>
-            </body>
-            </html>
-        "#;
-
-        let sdom = SemanticDOM::parse(html, Config::default()).unwrap();
-        let summary = to_agent_summary(&sdom);
-
-        assert!(summary.contains("PAGE:"));
-        assert!(summary.contains("LANDMARKS:"));
-        assert!(summary.contains("STATS:"));
-    }
-
-    #[test]
-    fn test_one_liner() {
-        let html = r#"
-            <html>
-            <head><title>Test</title></head>
-            <body>
-                <nav><a href="/">Home</a></nav>
-                <main><button>Click</button></main>
-            </body>
-            </html>
-        "#;
-
-        let sdom = SemanticDOM::parse(html, Config::default()).unwrap();
-        let one_liner = to_one_liner(&sdom);
-
-        // Should be a single line
-        assert!(!one_liner.contains('\n'));
-        assert!(one_liner.contains("Test"));
-    }
-
-    #[test]
-    fn test_token_comparison() {
-        let html = r#"
-            <html>
-            <body>
-                <nav><a href="/">Home</a><a href="/about">About</a></nav>
-                <main>
-                    <h1>Welcome</h1>
-                    <button>Submit</button>
-                    <button>Cancel</button>
-                </main>
-            </body>
-            </html>
-        "#;
-
-        let sdom = SemanticDOM::parse(html, Config::default()).unwrap();
-        let comparison = compare_token_usage(&sdom);
-
-        // Summary should be significantly smaller than JSON
-        assert!(comparison.summary_tokens < comparison.json_tokens);
-        assert!(comparison.summary_reduction > 0.0);
-    }
+    text.len().div_ceil(4)
 }

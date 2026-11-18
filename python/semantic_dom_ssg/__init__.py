@@ -15,60 +15,82 @@ Quick Start:
     >>> html = '<html><body><nav><a href="/">Home</a></nav></body></html>'
     >>> sdom = SemanticDOM.parse(html)
     >>> print(sdom.to_agent_summary())
+    LANDMARKS: nav(nav)
+    ACTIONS: [nav]Home
+    STATE: initial -> Home
+    STATS: 1L 1A 0H
 """
 
-from .types import (
-    SemanticRole,
-    SemanticIntent,
-    SemanticNode,
-    State,
-    Transition,
-    StateGraph,
-)
-from .parser import SemanticDOM
-from .config import Config
+# Single source of truth for the version: pyproject.toml reads it from here.
+__version__ = "0.3.0"
+
 from .certification import (
     AgentCertification,
     CertificationLevel,
+    CertificationStats,
     CheckCategory,
     ValidationCheck,
 )
-from .summary import (
-    to_agent_summary,
-    to_one_liner,
-    to_nav_summary,
-    to_audio_summary,
-    compare_token_usage,
+from .config import Config
+from .parser import SemanticDOM
+from .security import (
+    InputTooLargeError,
+    InvalidUrlError,
+    InvalidUrlProtocolError,
+    SecurityConfig,
+    SecurityError,
+    UrlTooLongError,
+    sanitize_text,
+    validate_url,
 )
-from .security import validate_url, SecurityConfig
-
-__version__ = "0.2.0"
-__all__ = [
-    # Core
-    "SemanticDOM",
-    "Config",
-    # Types
-    "SemanticRole",
-    "SemanticIntent",
-    "SemanticNode",
-    "State",
-    "Transition",
-    "StateGraph",
-    # Certification
-    "AgentCertification",
-    "CertificationLevel",
-    "CheckCategory",
-    "ValidationCheck",
-    # Summary
-    "to_agent_summary",
-    "to_one_liner",
-    "to_nav_summary",
-    "to_audio_summary",
-    "compare_token_usage",
-    # Security
-    "validate_url",
-    "SecurityConfig",
-]
+from .summary import (
+    TokenComparison,
+    compare_token_usage,
+    to_agent_summary,
+    to_audio_summary,
+    to_nav_summary,
+    to_one_liner,
+)
+from .types import (
+    SemanticIntent,
+    SemanticNode,
+    SemanticRole,
+    State,
+    StateGraph,
+    Transition,
+)
 
 # Standard reference
 STANDARD = "ISO/IEC-SDOM-SSG-DRAFT-2024"
+
+__all__ = [
+    "STANDARD",
+    "AgentCertification",
+    "CertificationLevel",
+    "CertificationStats",
+    "CheckCategory",
+    "Config",
+    "InputTooLargeError",
+    "InvalidUrlError",
+    "InvalidUrlProtocolError",
+    "SecurityConfig",
+    "SecurityError",
+    "SemanticDOM",
+    "SemanticIntent",
+    "SemanticNode",
+    "SemanticRole",
+    "State",
+    "StateGraph",
+    "TokenComparison",
+    "Transition",
+    "UrlTooLongError",
+    "ValidationCheck",
+    "__version__",
+    "compare_token_usage",
+    "sanitize_text",
+    "to_agent_summary",
+    "to_audio_summary",
+    "to_nav_summary",
+    "to_one_liner",
+    "validate_url",
+]

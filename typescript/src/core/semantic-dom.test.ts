@@ -3,8 +3,7 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import { SemanticDOM, createSemanticDOM, generateSemanticId } from './semantic-dom.js';
-import type { SemanticNode, SemanticDocument } from './types.js';
+import { createSemanticDOM, generateSemanticId, type SemanticDOM } from './semantic-dom.js';
 
 describe('SemanticDOM', () => {
   let sdom: SemanticDOM;

@@ -5,7 +5,14 @@
  * @packageDocumentation
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  useSyncExternalStore,
+  type RefObject,
+} from 'react';
 import type {
   SemanticDocument,
   SemanticNode,
@@ -14,10 +21,33 @@ import type {
   SemanticDOMConfig,
   SSGNode,
   StateType,
-  StateTransition,
   NavigationOptions,
 } from '../core/types.js';
-import { SemanticDOM, createSemanticDOM } from '../core/semantic-dom.js';
+import { meetsLevel } from '../core/certification.js';
+import { createSemanticDOM, type SemanticDOM } from '../core/semantic-dom.js';
+import { OBSERVED_ATTRIBUTES } from '../vanilla/observer.js';
+import { globalSSGStore, type StateChange } from './ssg-store.js';
+
+export { SSGStore, globalSSGStore } from './ssg-store.js';
+export type { StateChange } from './ssg-store.js';
+
+/**
+ * Describe a value by content so that an object literal passed on every
+ * render (`useSemanticDOM({ maxDepth: 10 })`) does not look new each time.
+ */
+function contentKey(value: unknown): string {
+  return JSON.stringify(value ?? null, (_key, v: unknown) => {
+    if (v instanceof RegExp) return v.toString();
+    if (typeof v === 'function') return `[function ${v.name}]`;
+    return v;
+  });
+}
+
+/** Keep returning the first object seen for as long as its content is equal */
+function useStableValue<T>(value: T): T {
+  const key = contentKey(value);
+  return useMemo(() => value, [key]);
+}
 
 /**
  * Hook to create and use a SemanticDOM instance
@@ -35,7 +65,8 @@ export function useSemanticDOM(
     options: NavigationOptions
   ) => SemanticNode | null;
 } {
-  const sdom = useMemo(() => createSemanticDOM(config), [config]);
+  const stableConfig = useStableValue(config);
+  const sdom = useMemo(() => createSemanticDOM(stableConfig), [stableConfig]);
 
   const parse = useCallback(
     (element: Element, url?: string, title?: string) => sdom.parse(element, url, title),
@@ -65,7 +96,7 @@ export function useSemanticDOM(
  * Hook to parse a DOM element ref into a SemanticDocument
  */
 export function useSemanticDocument(
-  ref: React.RefObject<Element>,
+  ref: RefObject<Element | null>,
   config?: SemanticDOMConfig,
   deps: unknown[] = []
 ): SemanticDocument | null {
@@ -78,7 +109,9 @@ export function useSemanticDocument(
       const title = typeof window !== 'undefined' ? window.document.title : '';
       setDocument(parse(ref.current, url, title));
     }
-  }, [ref, parse, deps]);
+    // `deps` is spread: passing the array itself would be a new value on every
+    // render and re-run this effect (and its setState) in an endless loop.
+  }, [ref, parse, ...deps]);
 
   return document;
 }
@@ -92,11 +125,12 @@ export function useSemanticQuery(
   deps: unknown[] = []
 ): SemanticNode[] {
   const { query: queryFn } = useSemanticDOM();
+  const stableQuery = useStableValue(query);
 
   return useMemo(() => {
     if (!document) return [];
-    return queryFn(document.root, query);
-  }, [document, queryFn, query, deps]);
+    return queryFn(document.root, stableQuery);
+  }, [document, queryFn, stableQuery, ...deps]);
 }
 
 /**
@@ -171,68 +205,6 @@ export function useSemanticNavigation(
 }
 
 /**
- * Store for SSG state management
- */
-class SSGStore {
-  private state: Map<SemanticId, StateType> = new Map();
-  private history: Map<SemanticId, Array<{ from: StateType; to: StateType; timestamp: number }>> =
-    new Map();
-  private listeners: Set<() => void> = new Set();
-
-  getState(id: SemanticId): StateType | undefined {
-    return this.state.get(id);
-  }
-
-  getHistory(id: SemanticId): Array<{ from: StateType; to: StateType; timestamp: number }> {
-    return this.history.get(id) || [];
-  }
-
-  setState(id: SemanticId, newState: StateType): void {
-    const currentState = this.state.get(id) || 'idle';
-    if (currentState === newState) return;
-
-    this.state.set(id, newState);
-
-    // Update history
-    const hist = this.history.get(id) || [];
-    hist.push({ from: currentState, to: newState, timestamp: Date.now() });
-    if (hist.length > 100) hist.shift();
-    this.history.set(id, hist);
-
-    this.emit();
-  }
-
-  transition(id: SemanticId, trigger: string, transitions: StateTransition[]): boolean {
-    const currentState = this.state.get(id) || 'idle';
-    const transition = transitions.find(
-      (t) => t.from === currentState && t.trigger === trigger
-    );
-
-    if (transition) {
-      this.setState(id, transition.to);
-      return true;
-    }
-    return false;
-  }
-
-  subscribe(listener: () => void): () => void {
-    this.listeners.add(listener);
-    return () => this.listeners.delete(listener);
-  }
-
-  private emit(): void {
-    this.listeners.forEach((l) => l());
-  }
-
-  getSnapshot(): Map<SemanticId, StateType> {
-    return new Map(this.state);
-  }
-}
-
-// Global store instance
-const globalSSGStore = new SSGStore();
-
-/**
  * Hook for SSG state management
  */
 export function useSSG(
@@ -242,23 +214,30 @@ export function useSSG(
   state: StateType;
   setState: (state: StateType) => void;
   transition: (trigger: string) => boolean;
-  history: Array<{ from: StateType; to: StateType; timestamp: number }>;
+  history: StateChange[];
   canTransition: (trigger: string) => boolean;
 } {
-  // Initialize state from SSG node if provided
+  const initialState: StateType = ssgNode?.currentState ?? 'idle';
+
+  // Seed the store from the SSG node; this is not a transition, so it leaves
+  // no history entry.
   useEffect(() => {
-    if (ssgNode && !globalSSGStore.getState(id)) {
-      globalSSGStore.setState(id, ssgNode.currentState);
-    }
-  }, [id, ssgNode]);
+    globalSSGStore.initialize(id, initialState);
+  }, [id, initialState]);
+
+  const subscribe = useCallback((callback: () => void) => globalSSGStore.subscribe(callback), []);
 
   const state = useSyncExternalStore<StateType>(
-    (callback) => globalSSGStore.subscribe(callback),
-    () => globalSSGStore.getState(id) || ('idle' as StateType),
-    () => 'idle' as StateType
+    subscribe,
+    () => globalSSGStore.getState(id) ?? initialState,
+    () => initialState
   );
 
-  const history = useMemo(() => globalSSGStore.getHistory(id), [id, state]);
+  const history = useSyncExternalStore<StateChange[]>(
+    subscribe,
+    () => globalSSGStore.getHistory(id),
+    () => globalSSGStore.getHistory(id)
+  );
 
   const setState = useCallback(
     (newState: StateType) => {
@@ -270,6 +249,7 @@ export function useSSG(
   const transition = useCallback(
     (trigger: string) => {
       if (!ssgNode) return false;
+      globalSSGStore.initialize(id, ssgNode.currentState);
       return globalSSGStore.transition(id, trigger, ssgNode.transitions);
     },
     [id, ssgNode]
@@ -278,7 +258,7 @@ export function useSSG(
   const canTransition = useCallback(
     (trigger: string) => {
       if (!ssgNode) return false;
-      const currentState = globalSSGStore.getState(id) || 'idle';
+      const currentState = globalSSGStore.getState(id) ?? ssgNode.currentState;
       return ssgNode.transitions.some(
         (t) => t.from === currentState && t.trigger === trigger
       );
@@ -293,43 +273,45 @@ export function useSSG(
  * Hook to observe document state and re-parse on changes
  */
 export function useSemanticObserver(
-  ref: React.RefObject<Element>,
-  config?: SemanticDOMConfig
+  ref: RefObject<Element | null>,
+  config?: SemanticDOMConfig,
+  debounceMs = 100
 ): SemanticDocument | null {
   const { parse } = useSemanticDOM(config);
   const [document, setDocument] = useState<SemanticDocument | null>(null);
-  const observerRef = useRef<MutationObserver | null>(null);
 
   useEffect(() => {
-    if (typeof window === 'undefined' || !ref.current) return;
+    const element = ref.current;
+    if (typeof window === 'undefined' || !element) return;
 
     const parseDocument = () => {
-      if (ref.current) {
-        const url = window.location.href;
-        const title = window.document.title;
-        setDocument(parse(ref.current, url, title));
-      }
+      setDocument(parse(element, window.location.href, window.document.title));
     };
 
-    // Initial parse
     parseDocument();
+    if (typeof MutationObserver === 'undefined') return;
 
-    // Observe for changes
-    observerRef.current = new MutationObserver(() => {
-      parseDocument();
+    // Bursts of mutations (a framework commit touches many nodes) collapse
+    // into one re-parse.
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const observer = new MutationObserver(() => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(parseDocument, debounceMs);
     });
 
-    observerRef.current.observe(ref.current, {
+    observer.observe(element, {
       childList: true,
       subtree: true,
+      characterData: true,
       attributes: true,
-      attributeFilter: ['aria-*', 'role', 'disabled', 'hidden'],
+      attributeFilter: [...OBSERVED_ATTRIBUTES],
     });
 
     return () => {
-      observerRef.current?.disconnect();
+      if (timer) clearTimeout(timer);
+      observer.disconnect();
     };
-  }, [ref, parse]);
+  }, [ref, parse, debounceMs]);
 
   return document;
 }
@@ -375,7 +357,7 @@ export function useCertification(document: SemanticDocument | null): {
       score: agentReady.score,
       passed: agentReady.checks.length,
       failed: agentReady.failures.length,
-      isAgentReady: agentReady.level !== 'none' && agentReady.level !== 'basic',
+      isAgentReady: meetsLevel(agentReady.level, 'standard'),
     };
   }, [document]);
 }

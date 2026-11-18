@@ -4,16 +4,24 @@ Provides ultra-compact output formats optimized for LLM consumption,
 reducing token usage by ~87% compared to JSON.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from .security import sanitize_text
 from .types import SemanticIntent, SemanticRole
 
 if TYPE_CHECKING:
     from .parser import SemanticDOM
 
+#: Maximum number of interactables listed on the ACTIONS line.
+MAX_SUMMARY_ACTIONS = 10
+#: Maximum number of states listed on the STATE line.
+MAX_SUMMARY_STATES = 5
 
-def to_agent_summary(sdom: "SemanticDOM") -> str:
+
+def to_agent_summary(sdom: SemanticDOM) -> str:
     """Generate a token-efficient agent summary.
 
     This format uses approximately 100 tokens compared to ~800 for JSON,
@@ -26,57 +34,65 @@ def to_agent_summary(sdom: "SemanticDOM") -> str:
         STATE: initial -> home, about, contact
         STATS: 3L 5A 2H
 
+    Every line starts with a fixed keyword. Page-controlled text (title,
+    labels, selectors) is reduced to a single line, so a page cannot add
+    lines of its own; the text itself remains untrusted data.
+
     Args:
         sdom: The SemanticDOM to summarize
 
     Returns:
         A compact string summary
     """
-    lines = []
+    lines: list[str] = []
 
     # Title line
-    if sdom.title:
-        lines.append(f"PAGE: {sdom.title}")
+    title = _line(sdom.title or "")
+    if title:
+        lines.append(f"PAGE: {title}")
 
     # Landmarks line
-    landmarks = []
+    landmarks: list[str] = []
     for node_id in sdom.landmarks:
         node = sdom.index.get(node_id)
         if node:
             role_abbrev = _role_abbrev(node.role)
-            selector_short = _selector_short(node.selector)
+            selector_short = _selector_short(_line(node.selector))
             landmarks.append(f"{role_abbrev}({selector_short})")
 
     if landmarks:
         lines.append(f"LANDMARKS: {', '.join(landmarks)}")
 
     # Actions line (interactables)
-    actions = []
-    for node_id in sdom.interactables[:10]:  # Limit to 10
+    actions: list[str] = []
+    for node_id in sdom.interactables[:MAX_SUMMARY_ACTIONS]:
         node = sdom.index.get(node_id)
         if node:
             intent = _intent_abbrev(node.intent) if node.intent else "act"
-            label = node.label[:17] + "..." if len(node.label) > 20 else node.label
-            actions.append(f"[{intent}]{label}")
+            actions.append(f"[{intent}]{_line(node.label, 20)}")
+    hidden = len(sdom.interactables) - MAX_SUMMARY_ACTIONS
+    if hidden > 0:
+        actions.append(f"+{hidden} more")
 
     if actions:
         lines.append(f"ACTIONS: {', '.join(actions)}")
 
-    # State graph summary
-    if sdom.state_graph.states:
-        states = [s.name for s in sdom.state_graph.states[:5]]
-        initial = sdom.state_graph.initial_state or "none"
-        lines.append(f"STATE: {initial} -> {', '.join(states)}")
+    # State graph summary: the states reachable from the initial one
+    initial = sdom.state_graph.initial_state
+    targets = [_line(s.name, 20) for s in sdom.state_graph.states if s.id != initial]
+    if targets:
+        shown = targets[:MAX_SUMMARY_STATES]
+        if len(targets) > len(shown):
+            shown.append(f"+{len(targets) - len(shown)} more")
+        lines.append(f"STATE: {_line(initial or 'none')} -> {', '.join(shown)}")
 
     # Stats line
-    lines.append(
-        f"STATS: {len(sdom.landmarks)}L {len(sdom.interactables)}A {len(sdom.headings)}H"
-    )
+    lines.append(f"STATS: {len(sdom.landmarks)}L {len(sdom.interactables)}A {len(sdom.headings)}H")
 
     return "\n".join(lines)
 
 
-def to_one_liner(sdom: "SemanticDOM") -> str:
+def to_one_liner(sdom: SemanticDOM) -> str:
     """Generate a one-line summary (~20 tokens).
 
     Format:
@@ -88,24 +104,21 @@ def to_one_liner(sdom: "SemanticDOM") -> str:
     Returns:
         A single-line summary string
     """
-    title = sdom.title or "Untitled"
-    if len(title) > 30:
-        title = title[:27] + "..."
+    title = _line(sdom.title or "", 30) or "Untitled"
 
     # Get landmark types
-    landmarks = []
+    landmarks: list[str] = []
     for node_id in sdom.landmarks[:3]:
         node = sdom.index.get(node_id)
         if node:
             landmarks.append(_role_short(node.role))
 
     # Get action labels
-    actions = []
+    actions: list[str] = []
     for node_id in sdom.interactables[:3]:
         node = sdom.index.get(node_id)
         if node:
-            label = node.label[:7] + "..." if len(node.label) > 10 else node.label
-            actions.append(f"{_role_short(node.role)}:{label}")
+            actions.append(f"{_role_short(node.role)}:{_line(node.label, 10)}")
 
     return (
         f"{title} | "
@@ -115,7 +128,7 @@ def to_one_liner(sdom: "SemanticDOM") -> str:
     )
 
 
-def to_nav_summary(sdom: "SemanticDOM") -> str:
+def to_nav_summary(sdom: SemanticDOM) -> str:
     """Generate a navigation-focused summary.
 
     Args:
@@ -124,14 +137,14 @@ def to_nav_summary(sdom: "SemanticDOM") -> str:
     Returns:
         A navigation-focused summary string
     """
-    lines = []
+    lines: list[str] = []
 
     # Navigation links
-    nav_links = []
+    nav_links: list[str] = []
     for node_id in sdom.interactables:
         node = sdom.index.get(node_id)
         if node and node.role == SemanticRole.LINK and node.href:
-            nav_links.append(f"{node.label} -> {node.href}")
+            nav_links.append(f"{_line(node.label)} -> {_line(node.href)}")
             if len(nav_links) >= 10:
                 break
 
@@ -144,12 +157,12 @@ def to_nav_summary(sdom: "SemanticDOM") -> str:
     if sdom.state_graph.transitions:
         lines.append("TRANSITIONS:")
         for t in sdom.state_graph.transitions[:5]:
-            lines.append(f"  {t.from_state} -[{t.trigger}]-> {t.to_state}")
+            lines.append(f"  {_line(t.from_state)} -[{_line(t.trigger)}]-> {_line(t.to_state)}")
 
     return "\n".join(lines)
 
 
-def to_audio_summary(sdom: "SemanticDOM") -> str:
+def to_audio_summary(sdom: SemanticDOM) -> str:
     """Generate an audio/screen-reader friendly summary.
 
     Args:
@@ -158,32 +171,29 @@ def to_audio_summary(sdom: "SemanticDOM") -> str:
     Returns:
         An audio-friendly summary string
     """
-    parts = []
+    parts: list[str] = []
 
     # Page title
-    if sdom.title:
-        parts.append(f"Page: {sdom.title}")
+    title = _line(sdom.title or "")
+    if title:
+        parts.append(f"Page: {title}")
 
     # Landmark summary
     landmark_count = len(sdom.landmarks)
     if landmark_count > 0:
-        parts.append(
-            f"{landmark_count} landmark region{'s' if landmark_count != 1 else ''}"
-        )
+        parts.append(f"{landmark_count} landmark region{'s' if landmark_count != 1 else ''}")
 
     # Action summary
     action_count = len(sdom.interactables)
     if action_count > 0:
-        parts.append(
-            f"{action_count} interactive element{'s' if action_count != 1 else ''}"
-        )
+        parts.append(f"{action_count} interactive element{'s' if action_count != 1 else ''}")
 
     # Main actions
-    main_actions = []
+    main_actions: list[str] = []
     for node_id in sdom.interactables:
         node = sdom.index.get(node_id)
         if node and node.intent and node.intent != SemanticIntent.UNKNOWN:
-            main_actions.append(node.label)
+            main_actions.append(_line(node.label))
             if len(main_actions) >= 5:
                 break
 
@@ -204,7 +214,7 @@ class TokenComparison:
     one_liner_reduction: float
 
 
-def compare_token_usage(sdom: "SemanticDOM") -> TokenComparison:
+def compare_token_usage(sdom: SemanticDOM) -> TokenComparison:
     """Compare token usage between formats.
 
     Args:
@@ -233,6 +243,11 @@ def compare_token_usage(sdom: "SemanticDOM") -> TokenComparison:
             ((json_tokens - one_liner_tokens) / json_tokens * 100) if json_tokens > 0 else 0
         ),
     )
+
+
+def _line(text: str, max_length: int | None = None) -> str:
+    """Force text onto one line (defence in depth for hand-built nodes)."""
+    return sanitize_text(text, max_length)
 
 
 def _role_abbrev(role: SemanticRole) -> str:

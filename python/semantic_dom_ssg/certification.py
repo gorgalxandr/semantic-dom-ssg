@@ -4,9 +4,11 @@ Provides compliance validation and scoring based on the
 ISO/IEC-SDOM-SSG-DRAFT-2024 specification.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from .types import SemanticRole
 
@@ -44,18 +46,33 @@ class CertificationLevel(Enum):
         }
         return names[self]
 
-    def __lt__(self, other: "CertificationLevel") -> bool:
-        order = [CertificationLevel.NONE, CertificationLevel.A, CertificationLevel.AA, CertificationLevel.AAA]
-        return order.index(self) < order.index(other)
+    @property
+    def rank(self) -> int:
+        """Position in the ordering NONE < A < AA < AAA."""
+        return _LEVEL_ORDER.index(self.value)
 
-    def __le__(self, other: "CertificationLevel") -> bool:
-        return self == other or self < other
+    def __lt__(self, other: object) -> bool:
+        if not isinstance(other, CertificationLevel):
+            return NotImplemented
+        return self.rank < other.rank
 
-    def __gt__(self, other: "CertificationLevel") -> bool:
-        return not self <= other
+    def __le__(self, other: object) -> bool:
+        if not isinstance(other, CertificationLevel):
+            return NotImplemented
+        return self.rank <= other.rank
 
-    def __ge__(self, other: "CertificationLevel") -> bool:
-        return not self < other
+    def __gt__(self, other: object) -> bool:
+        if not isinstance(other, CertificationLevel):
+            return NotImplemented
+        return self.rank > other.rank
+
+    def __ge__(self, other: object) -> bool:
+        if not isinstance(other, CertificationLevel):
+            return NotImplemented
+        return self.rank >= other.rank
+
+
+_LEVEL_ORDER = ("none", "a", "aa", "aaa")
 
 
 class CheckCategory(Enum):
@@ -86,7 +103,7 @@ class ValidationCheck:
     name: str
     category: CheckCategory
     passed: bool
-    details: Optional[str] = None
+    details: str | None = None
     weight: float = 1.0
 
 
@@ -112,7 +129,7 @@ class AgentCertification:
     stats: CertificationStats
 
     @classmethod
-    def certify(cls, sdom: "SemanticDOM") -> "AgentCertification":
+    def certify(cls, sdom: SemanticDOM) -> AgentCertification:
         """Certify a SemanticDOM document.
 
         Args:
@@ -167,7 +184,9 @@ class AgentCertification:
         total_score += completeness * 0.1  # 10% bonus
 
         # Normalize to 0-100
-        score = int(min(100, max(0, total_score * 100)))
+        # (truncated, like the Rust implementation; the epsilon absorbs float error
+        # so that e.g. 0.7 * 100 is 70 and not 69)
+        score = int(min(100.0, max(0.0, total_score * 100 + 1e-9)))
 
         # Determine level
         if score >= 90:
@@ -193,7 +212,7 @@ class AgentCertification:
         return cls(level=level, score=score, checks=checks, stats=stats)
 
     @staticmethod
-    def _calculate_completeness(sdom: "SemanticDOM") -> float:
+    def _calculate_completeness(sdom: SemanticDOM) -> float:
         """Calculate content completeness score."""
         completeness = 0.0
         max_completeness = 0.0
@@ -201,9 +220,7 @@ class AgentCertification:
 
         # Check labels (25%)
         max_completeness += 0.25
-        labeled = sum(
-            1 for n in sdom.index.values() if n.label and n.label != n.role.value
-        )
+        labeled = sum(1 for n in sdom.index.values() if n.label and n.label != n.role.value)
         completeness += 0.25 * min(labeled / total, 1.0)
 
         # Check selectors (25%)
@@ -213,9 +230,8 @@ class AgentCertification:
 
         # Check intents (25%)
         max_completeness += 0.25
-        interactables = max(len(sdom.interactables), 1)
         with_intents = sum(1 for n in sdom.index.values() if n.intent is not None)
-        completeness += 0.25 * min(with_intents / interactables, 1.0)
+        completeness += 0.25 * _coverage(with_intents, len(sdom.interactables))
 
         # Check accessible names (25%)
         max_completeness += 0.25
@@ -227,7 +243,7 @@ class AgentCertification:
     # Structure checks
 
     @staticmethod
-    def _check_has_landmarks(sdom: "SemanticDOM") -> ValidationCheck:
+    def _check_has_landmarks(sdom: SemanticDOM) -> ValidationCheck:
         return ValidationCheck(
             id="STRUCT-001",
             name="Has landmark regions",
@@ -237,7 +253,7 @@ class AgentCertification:
         )
 
     @staticmethod
-    def _check_has_main(sdom: "SemanticDOM") -> ValidationCheck:
+    def _check_has_main(sdom: SemanticDOM) -> ValidationCheck:
         has_main = any(n.role == SemanticRole.MAIN for n in sdom.index.values())
         return ValidationCheck(
             id="STRUCT-002",
@@ -247,7 +263,7 @@ class AgentCertification:
         )
 
     @staticmethod
-    def _check_heading_hierarchy(sdom: "SemanticDOM") -> ValidationCheck:
+    def _check_heading_hierarchy(sdom: SemanticDOM) -> ValidationCheck:
         return ValidationCheck(
             id="STRUCT-003",
             name="Has heading structure",
@@ -258,101 +274,78 @@ class AgentCertification:
         )
 
     @staticmethod
-    def _check_unique_ids(sdom: "SemanticDOM") -> ValidationCheck:
+    def _check_unique_ids(sdom: SemanticDOM) -> ValidationCheck:
+        duplicates = len(sdom.duplicate_ids)
+        if duplicates:
+            details = f"{duplicates} duplicated id value{'s' if duplicates != 1 else ''} in source"
+        else:
+            details = f"{len(sdom.index)} unique nodes"
         return ValidationCheck(
             id="STRUCT-004",
             name="Unique element IDs",
             category=CheckCategory.STRUCTURE,
-            passed=True,  # Dict keys are unique by definition
-            details=f"{len(sdom.index)} unique nodes",
+            passed=duplicates == 0,
+            details=details,
             weight=0.5,
         )
 
     # Accessibility checks
 
     @staticmethod
-    def _check_accessible_names(sdom: "SemanticDOM") -> ValidationCheck:
-        interactables_with_names = sum(
-            1
-            for node_id in sdom.interactables
-            if (node := sdom.index.get(node_id))
-            and (node.accessible_name or node.label)
-        )
-        total = max(len(sdom.interactables), 1)
-        pct = (interactables_with_names / total) * 100
-
+    def _check_accessible_names(sdom: SemanticDOM) -> ValidationCheck:
+        nodes = sdom.get_interactables()
+        named = sum(1 for n in nodes if n.accessible_name)
         return ValidationCheck(
             id="A11Y-001",
             name="Interactables have accessible names",
             category=CheckCategory.ACCESSIBILITY,
-            passed=pct >= 80,
-            details=f"{interactables_with_names}/{total} ({pct:.0f}%)",
+            passed=_coverage(named, len(nodes)) >= PASS_THRESHOLD,
+            details=f"{named}/{len(nodes)} ({_coverage(named, len(nodes)) * 100:.0f}%)",
         )
 
     @staticmethod
-    def _check_link_text(sdom: "SemanticDOM") -> ValidationCheck:
+    def _check_link_text(sdom: SemanticDOM) -> ValidationCheck:
         links = [n for n in sdom.index.values() if n.role == SemanticRole.LINK]
-        with_text = sum(1 for n in links if n.label and n.label != "a")
-        total = max(len(links), 1)
-        passed = with_text / total >= 0.8
-
+        with_text = sum(1 for n in links if n.accessible_name)
         return ValidationCheck(
             id="A11Y-002",
             name="Links have descriptive text",
             category=CheckCategory.ACCESSIBILITY,
-            passed=passed,
-            details=f"{with_text}/{total} links have text",
+            passed=_coverage(with_text, len(links)) >= PASS_THRESHOLD,
+            details=f"{with_text}/{len(links)} links have text",
             weight=0.75,
         )
 
     @staticmethod
-    def _check_button_text(sdom: "SemanticDOM") -> ValidationCheck:
+    def _check_button_text(sdom: SemanticDOM) -> ValidationCheck:
         buttons = [n for n in sdom.index.values() if n.role == SemanticRole.BUTTON]
-        with_text = sum(1 for n in buttons if n.label and n.label != "button")
-        total = max(len(buttons), 1)
-        passed = total == 0 or with_text / total >= 0.8
-
+        with_text = sum(1 for n in buttons if n.accessible_name)
         return ValidationCheck(
             id="A11Y-003",
             name="Buttons have descriptive text",
             category=CheckCategory.ACCESSIBILITY,
-            passed=passed,
-            details=f"{with_text}/{total} buttons have text",
+            passed=_coverage(with_text, len(buttons), empty=1.0) >= PASS_THRESHOLD,
+            details=f"{with_text}/{len(buttons)} buttons have text",
             weight=0.75,
         )
 
     @staticmethod
-    def _check_form_labels(sdom: "SemanticDOM") -> ValidationCheck:
-        inputs = [
-            n
-            for n in sdom.index.values()
-            if n.role
-            in {
-                SemanticRole.TEXT_INPUT,
-                SemanticRole.CHECKBOX,
-                SemanticRole.RADIO,
-                SemanticRole.SELECT,
-            }
-        ]
-        with_labels = sum(
-            1 for n in inputs if n.accessible_name is not None or n.label
-        )
-        total = max(len(inputs), 1)
-        passed = total == 0 or with_labels / total >= 0.8
-
+    def _check_form_labels(sdom: SemanticDOM) -> ValidationCheck:
+        inputs = [n for n in sdom.index.values() if n.role in _FORM_ROLES]
+        with_labels = sum(1 for n in inputs if n.accessible_name)
         return ValidationCheck(
             id="A11Y-004",
             name="Form inputs have labels",
             category=CheckCategory.ACCESSIBILITY,
-            passed=passed,
-            details=f"{with_labels}/{total} inputs have labels",
+            passed=_coverage(with_labels, len(inputs), empty=1.0) >= PASS_THRESHOLD,
+            details=f"{with_labels}/{len(inputs)} inputs have labels",
             weight=0.5,
         )
 
     # Navigation checks
 
     @staticmethod
-    def _check_navigation_exists(sdom: "SemanticDOM") -> ValidationCheck:
+    def _check_navigation_exists(sdom: SemanticDOM) -> ValidationCheck:
         has_nav = any(n.role == SemanticRole.NAVIGATION for n in sdom.index.values())
         return ValidationCheck(
             id="NAV-001",
@@ -362,27 +355,25 @@ class AgentCertification:
         )
 
     @staticmethod
-    def _check_deterministic_fsm(sdom: "SemanticDOM") -> ValidationCheck:
-        is_deterministic = sdom.state_graph.is_deterministic()
+    def _check_deterministic_fsm(sdom: SemanticDOM) -> ValidationCheck:
+        graph = sdom.state_graph
         return ValidationCheck(
             id="NAV-002",
             name="State graph is deterministic",
             category=CheckCategory.NAVIGATION,
-            passed=is_deterministic,
-            details=f"{len(sdom.state_graph.states)} states, {len(sdom.state_graph.transitions)} transitions",
+            passed=graph.is_deterministic(),
+            details=f"{len(graph.states)} states, {len(graph.transitions)} transitions",
         )
 
     @staticmethod
-    def _check_reachable_states(sdom: "SemanticDOM") -> ValidationCheck:
+    def _check_reachable_states(sdom: SemanticDOM) -> ValidationCheck:
         total_states = len(sdom.state_graph.states)
         reachable = len(sdom.state_graph.reachable_states())
-        passed = total_states == 0 or reachable == total_states
-
         return ValidationCheck(
             id="NAV-003",
             name="All states reachable",
             category=CheckCategory.NAVIGATION,
-            passed=passed,
+            passed=reachable == total_states,
             details=f"{reachable}/{total_states} states reachable",
             weight=0.75,
         )
@@ -390,34 +381,45 @@ class AgentCertification:
     # Interoperability checks
 
     @staticmethod
-    def _check_selectors(sdom: "SemanticDOM") -> ValidationCheck:
+    def _check_selectors(sdom: SemanticDOM) -> ValidationCheck:
         with_selectors = sum(1 for n in sdom.index.values() if n.selector)
-        total = max(len(sdom.index), 1)
-        pct = (with_selectors / total) * 100
-
+        coverage = _coverage(with_selectors, len(sdom.index))
         return ValidationCheck(
             id="INTEROP-001",
             name="Elements have CSS selectors",
             category=CheckCategory.INTEROPERABILITY,
-            passed=pct >= 80,
-            details=f"{pct:.0f}% coverage",
+            passed=coverage >= PASS_THRESHOLD,
+            details=f"{coverage * 100:.0f}% coverage",
         )
 
     @staticmethod
-    def _check_intents(sdom: "SemanticDOM") -> ValidationCheck:
-        interactables_with_intents = sum(
-            1
-            for node_id in sdom.interactables
-            if (node := sdom.index.get(node_id)) and node.intent is not None
-        )
-        total = max(len(sdom.interactables), 1)
-        pct = (interactables_with_intents / total) * 100
-
+    def _check_intents(sdom: SemanticDOM) -> ValidationCheck:
+        nodes = sdom.get_interactables()
+        with_intents = sum(1 for n in nodes if n.intent is not None)
+        coverage = _coverage(with_intents, len(nodes))
         return ValidationCheck(
             id="INTEROP-002",
             name="Interactables have intents",
             category=CheckCategory.INTEROPERABILITY,
-            passed=pct >= 80,
-            details=f"{pct:.0f}% coverage",
+            passed=coverage >= PASS_THRESHOLD,
+            details=f"{coverage * 100:.0f}% coverage",
             weight=0.75,
         )
+
+
+#: Share of elements that must satisfy a coverage check for it to pass.
+PASS_THRESHOLD = 0.8
+
+_FORM_ROLES = frozenset(
+    {SemanticRole.TEXT_INPUT, SemanticRole.CHECKBOX, SemanticRole.RADIO, SemanticRole.SELECT}
+)
+
+
+def _coverage(part: int, total: int, *, empty: float = 0.0) -> float:
+    """Share of ``total`` covered by ``part``.
+
+    ``empty`` is the result when there is nothing to cover: 0.0 for checks that
+    require the element kind to exist (a page with no interactables is not
+    agent-ready), 1.0 for checks that only apply when the kind is present.
+    """
+    return empty if total == 0 else min(part / total, 1.0)

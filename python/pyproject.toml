@@ -1,13 +1,14 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.21"]
 build-backend = "hatchling.build"
 
 [project]
 name = "semantic-dom-ssg"
-version = "0.2.0"
+dynamic = ["version"]
 description = "Machine-readable web semantics for AI agents. O(1) lookup, deterministic navigation, token-efficient serialization."
 readme = "README.md"
 license = "MIT"
+license-files = ["LICENSE"]
 authors = [
     { name = "George Alexander", email = "info@gorgalxandr.com" }
 ]
@@ -23,28 +24,32 @@ keywords = [
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Internet :: WWW/HTTP :: Browsers",
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Topic :: Text Processing :: Markup :: HTML",
+    "Typing :: Typed",
 ]
 requires-python = ">=3.10"
 dependencies = [
-    "beautifulsoup4>=4.12.0",
+    # 4.13 is the first release with inline type hints (needed for mypy --strict).
+    "beautifulsoup4>=4.13.0",
     "lxml>=5.0.0",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=7.0.0",
-    "pytest-cov>=4.0.0",
-    "black>=23.0.0",
-    "mypy>=1.0.0",
-    "ruff>=0.1.0",
+    "pytest>=8.0.0",
+    "pytest-cov>=5.0.0",
+    "mypy>=1.11.0",
+    "ruff>=0.6.0",
+    "build>=1.2.0",
+    "twine>=6.0.0",
 ]
 
 [project.urls]
@@ -56,16 +61,28 @@ Issues = "https://github.com/gorgalxandr/semantic-dom-ssg/issues"
 [project.scripts]
 semantic-dom = "semantic_dom_ssg.cli:main"
 
+[tool.hatch.version]
+path = "semantic_dom_ssg/__init__.py"
+
 [tool.hatch.build.targets.wheel]
 packages = ["semantic_dom_ssg"]
 
-[tool.black]
-line-length = 100
-target-version = ["py310", "py311", "py312"]
+[tool.hatch.build.targets.sdist]
+include = ["semantic_dom_ssg", "tests", "README.md", "LICENSE", "pyproject.toml"]
 
 [tool.ruff]
 line-length = 100
 target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM", "PLE", "RUF"]
+ignore = [
+    "RUF001",  # ambiguous unicode in strings: tests use them on purpose
+    "SIM105",  # contextlib.suppress is not clearer for two-line try/except
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E501"]  # HTML fixtures read better on one line
 
 [tool.mypy]
 python_version = "3.10"
@@ -76,3 +93,5 @@ warn_unused_configs = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
+addopts = "-ra --strict-markers"
+filterwarnings = ["error"]
